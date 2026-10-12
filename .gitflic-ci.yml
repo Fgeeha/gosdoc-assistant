@@ -1,0 +1,66 @@
+# Конвейер GitFlic: lint → test → build → scan → deploy.
+# Агенту нужен Docker (testcontainers в тестах, сборка образов).
+# Адреса реестра, зеркал и сканеров — переменные проекта в GitFlic, не в этом файле:
+#   REGISTRY, REGISTRY_USER, REGISTRY_PASSWORD — реестр образов в контуре
+#   PIP_INDEX_URL, NPM_REGISTRY                 — зеркала PyPI и npm
+#   BASE_IMAGE                                  — базовый образ (по умолчанию Astra Linux)
+#   CI_TOOLS_IMAGE                              — образ с uv, Node.js и Docker CLI
+#   IMAGE_SCANNER_CMD, ML_SCANNER_CMD           — команды сканера образов и Сканера безопасности ML
+
+stages:
+  - lint
+  - test
+  - build
+  - scan
+  - deploy
+
+variables:
+  BASE_IMAGE: registry.astralinux.ru/astra/ubi18
+  IMAGE_TAG: $CI_COMMIT_SHORT_SHA
+  UV_INDEX_URL: $PIP_INDEX_URL
+
+lint:
+  stage: lint
+  image: $CI_TOOLS_IMAGE
+  scripts:
+    - uv sync --frozen
+    - cd frontend && npm ci --registry "$NPM_REGISTRY" --no-audit --no-fund && cd ..
+    - make lint
+
+test:
+  stage: test
+  image: $CI_TOOLS_IMAGE
+  variables:
+    # Образы для testcontainers — из реестра в контуре.
+    TC_POSTGRES_IMAGE: $REGISTRY/mirror/postgres:16-alpine
+    TC_SEAWEEDFS_IMAGE: $REGISTRY/mirror/seaweedfs:4.46
+  scripts:
+    - uv sync --frozen
+    - uv run pytest --junitxml=report.xml
+  artifacts:
+    paths:
+      - report.xml
+
+build:
+  stage: build
+  image: $CI_TOOLS_IMAGE
+  scripts:
+    - echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY" -u "$REGISTRY_USER" --password-stdin
+    - make images BASE_IMAGE="$BASE_IMAGE" PIP_INDEX_URL="$PIP_INDEX_URL" NPM_REGISTRY="$NPM_REGISTRY" IMAGE_PREFIX="$REGISTRY/gosdoc/gosdoc" IMAGE_TAG="$IMAGE_TAG"
+    - for t in api worker frontend; do docker push "$REGISTRY/gosdoc/gosdoc-$t:$IMAGE_TAG"; done
+
+scan:
+  stage: scan
+  image: $CI_TOOLS_IMAGE
+  scripts:
+    - for t in api worker frontend; do $IMAGE_SCANNER_CMD "$REGISTRY/gosdoc/gosdoc-$t:$IMAGE_TAG"; done
+    # Сканер безопасности ML: зависимости и код ML-пайплайнов (RAG, промпты).
+    - $ML_SCANNER_CMD --path rag --path backend --requirements uv.lock
+
+# Выкатка Helm-чартом появится на этапе 6 (deploy/helm).
+deploy:
+  stage: deploy
+  image: $CI_TOOLS_IMAGE
+  when: manual
+  scripts:
+    - echo "Helm-чарт будет добавлен на этапе 6"
