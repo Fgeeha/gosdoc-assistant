@@ -1,0 +1,1 @@
+# gosdoc-assistant
