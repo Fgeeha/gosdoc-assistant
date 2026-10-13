@@ -7,6 +7,7 @@ from gosdoc.api import admin, auth, files
 from gosdoc.core.config import get_settings
 from gosdoc.core.health import CRITICAL, check_dependencies
 from gosdoc.core.logging import setup_logging
+from gosdoc.docs_check import api as docs_check
 from gosdoc.letters import api as letters
 from gosdoc.tables import api as tables
 
@@ -28,6 +29,8 @@ def create_app() -> FastAPI:
         tables.router,
         letters.router,
         letters.blanks_router,
+        docs_check.router,
+        docs_check.npa_router,
     )
     for r in routers:
         app.include_router(r)

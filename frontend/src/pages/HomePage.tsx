@@ -1,8 +1,8 @@
-import { Card, Col, Row, Tag, Typography } from "antd";
+import { Card, Col, Row, Typography } from "antd";
 import { Link } from "react-router-dom";
 
 const MODULES = [
-  { title: "Проверка документов", text: "Проверка ссылок на НПА и соответствия содержания нормам.", to: null },
+  { title: "Проверка документов", text: "Проверка ссылок на НПА и соответствия содержания нормам.", to: "/check" },
   { title: "Подготовка писем", text: "Служебные письма по ГОСТ Р 7.0.97-2016 на бланке организации.", to: "/letters" },
   {
     title: "Перенос данных между таблицами",
@@ -18,7 +18,7 @@ export default function HomePage() {
       <Row gutter={[16, 16]}>
         {MODULES.map((m) => (
           <Col xs={24} md={8} key={m.title}>
-            <Card title={m.title} extra={m.to ? <Link to={m.to}>Открыть</Link> : <Tag>в разработке</Tag>}>
+            <Card title={m.title} extra={<Link to={m.to}>Открыть</Link>}>
               {m.text}
             </Card>
           </Col>

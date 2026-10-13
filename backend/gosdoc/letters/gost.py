@@ -136,8 +136,8 @@ def build_docx(doc: LetterDoc) -> bytes:
     section.left_margin, section.right_margin = Mm(MARGINS_MM["left"]), Mm(MARGINS_MM["right"])
     section.top_margin, section.bottom_margin = Mm(MARGINS_MM["top"]), Mm(MARGINS_MM["bottom"])
     normal = d.styles["Normal"]
-    normal.font.name, normal.font.size = FONT, Pt(TEXT_PT)  # type: ignore[attr-defined]
-    normal.element.rPr.rFonts.set(qn("w:eastAsia"), FONT)  # type: ignore[attr-defined]
+    normal.font.name, normal.font.size = FONT, Pt(TEXT_PT)
+    normal.element.rPr.rFonts.set(qn("w:eastAsia"), FONT)
 
     # Шапка: слева — бланк, дата и номер, ссылка на входящий; справа — адресат.
     header = d.add_table(rows=1, cols=2)

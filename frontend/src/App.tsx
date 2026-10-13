@@ -6,6 +6,8 @@ import AuditPage from "./pages/AuditPage";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
 import HomePage from "./pages/HomePage";
 import LoginPage from "./pages/LoginPage";
+import ChecksPage from "./pages/docs/ChecksPage";
+import NpaPage from "./pages/docs/NpaPage";
 import LetterEditor from "./pages/letters/LetterEditor";
 import LettersPage from "./pages/letters/LettersPage";
 import OrganizationPage from "./pages/OrganizationPage";
@@ -30,8 +32,10 @@ export default function App() {
   const isAdmin = me.roles.includes("sys_admin");
   const items = [
     { key: "/", label: <Link to="/">Главная</Link> },
+    { key: "/check", label: <Link to="/check">Проверка</Link> },
     { key: "/letters", label: <Link to="/letters">Письма</Link> },
     { key: "/tables", label: <Link to="/tables">Таблицы</Link> },
+    { key: "/npa", label: <Link to="/npa">Нормативная база</Link> },
     ...(isAdmin
       ? [
           { key: "/admin/users", label: <Link to="/admin/users">Пользователи</Link> },
@@ -61,6 +65,8 @@ export default function App() {
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/tables" element={<TablesPage />} />
+          <Route path="/check" element={<ChecksPage />} />
+          <Route path="/npa" element={<NpaPage me={me} />} />
           <Route path="/letters" element={<LettersPage />} />
           <Route path="/letters/:id" element={<LetterEditor me={me} />} />
           <Route path="/password" element={<ChangePasswordPage onDone={() => setMe(null)} />} />
