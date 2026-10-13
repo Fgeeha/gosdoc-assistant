@@ -14,10 +14,10 @@ from botocore.exceptions import BotoCoreError, ClientError
 from sqlalchemy import select
 
 from gosdoc.core.auth import ROLES, AuthError, check_password_policy, new_local_user, validate_roles
-from gosdoc.core.config import get_settings
+from gosdoc.core.config import Settings, get_settings
 from gosdoc.core.db import User, get_sessionmaker
 from gosdoc.core.files import cleanup_expired_files
-from gosdoc.core.health import wait_for_dependencies
+from gosdoc.core.health import migrations_applied, wait_for_dependencies
 from gosdoc.core.logging import setup_logging
 from gosdoc.core.storage import S3Storage, get_storage
 
@@ -72,6 +72,12 @@ def main(argv: list[str] | None = None) -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
     w = sub.add_parser("wait-deps", help="ждать доступности всех зависимостей")
     w.add_argument("--timeout", type=float, default=300)
+    w.add_argument(
+        "--only",
+        help="через запятую: postgres,redis,rabbitmq,storage,elasticsearch,vector_store,llm",
+    )
+    m = sub.add_parser("wait-migrations", help="ждать, пока схема БД дойдёт до версии образа")
+    m.add_argument("--timeout", type=float, default=600)
     i = sub.add_parser("init-storage", help="дождаться S3 и создать бакет, если его нет")
     i.add_argument("--timeout", type=float, default=300)
     c = sub.add_parser("cleanup-files", help="удалить файлы с истёкшим сроком хранения")
@@ -87,12 +93,25 @@ def main(argv: list[str] | None = None) -> int:
     settings = get_settings()
     setup_logging(settings.log_level)
     if args.cmd == "wait-deps":
-        return 0 if wait_for_dependencies(settings, args.timeout) else 1
+        only = set(args.only.split(",")) if args.only else None
+        return 0 if wait_for_dependencies(settings, args.timeout, only=only) else 1
+    if args.cmd == "wait-migrations":
+        return _wait_migrations(settings, args.timeout)
     if args.cmd == "init-storage":
         return _init_storage(args.timeout)
     if args.cmd == "cleanup-files":
         return _cleanup_files(args.every)
     return _create_user(args)
+
+
+def _wait_migrations(settings: Settings, timeout_s: float) -> int:
+    deadline = time.monotonic() + timeout_s
+    while not migrations_applied(settings):
+        if time.monotonic() > deadline:
+            print("Миграции не применены: схема БД старше образа", file=sys.stderr)
+            return 1
+        time.sleep(5)
+    return 0
 
 
 def _cleanup_files(every_s: float | None) -> int:

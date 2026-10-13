@@ -3,7 +3,7 @@
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
-from gosdoc.api import admin, auth, files
+from gosdoc.api import admin, auth, files, internal
 from gosdoc.core.config import get_settings
 from gosdoc.core.health import CRITICAL, check_dependencies
 from gosdoc.core.logging import setup_logging
@@ -31,6 +31,7 @@ def create_app() -> FastAPI:
         letters.blanks_router,
         docs_check.router,
         docs_check.npa_router,
+        internal.router,
     )
     for r in routers:
         app.include_router(r)

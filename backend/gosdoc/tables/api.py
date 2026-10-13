@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import event, or_
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from gosdoc.api.deps import audit_request, current_user
@@ -14,7 +14,7 @@ from gosdoc.core.config import get_settings
 from gosdoc.core.db import Job, StoredFile, User, get_db
 from gosdoc.core.files import save_file
 from gosdoc.core.llm import LLMClient
-from gosdoc.core.queue import Enqueue, get_enqueue
+from gosdoc.core.queue import Enqueue, enqueue_after_commit, get_enqueue
 from gosdoc.core.repository import OrgRepository
 from gosdoc.core.storage import FileStorage, get_storage
 from gosdoc.tables.mapping import Origin, suggest_mapping
@@ -307,14 +307,7 @@ def create_jobs(
         )
         audit_request(db, request, user, "tables.job_created", object_type="job", object_id=job.id)
         jobs.append(job)
-    # Воркер должен увидеть задачи в БД, поэтому в очередь — после коммита запроса.
-    ids = [job.id for job in jobs]
-
-    def send(_: Session) -> None:
-        for job_id in ids:
-            enqueue("tables", "process_table_job", job_id)
-
-    event.listen(db, "after_commit", send, once=True)
+    enqueue_after_commit(db, enqueue, "tables", "process_table_job", [job.id for job in jobs])
     return jobs
 
 

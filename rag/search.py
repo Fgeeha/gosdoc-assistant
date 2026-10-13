@@ -65,7 +65,9 @@ class ElasticIndex:
         if self.http.head(f"/{self.index}").status_code != 200:
             self._create()
         # Сразу после создания шарды ещё не размещены и запросы получают 503.
-        r = self.http.get(f"/_cluster/health/{self.index}", params={"wait_for_status": "yellow", "timeout": "30s"})
+        r = self.http.get(
+            f"/_cluster/health/{self.index}", params={"wait_for_status": "yellow", "timeout": "30s"}
+        )
         r.raise_for_status()
 
     def _create(self) -> None:

@@ -4,11 +4,13 @@ API ставит задачу по имени актора и не импорт�
 образе воркера. Брокер создаётся лениво, соединение открывается при отправке.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from functools import lru_cache
 
 import dramatiq
 from dramatiq.brokers.rabbitmq import RabbitmqBroker
+from sqlalchemy import event
+from sqlalchemy.orm import Session
 
 from gosdoc.core.config import get_settings
 
@@ -30,3 +32,16 @@ def enqueue(queue: str, actor: str, job_id: int) -> None:
 def get_enqueue() -> Enqueue:
     """Зависимость FastAPI; в тестах подменяется синхронным выполнением."""
     return enqueue
+
+
+def enqueue_after_commit(
+    db: Session, enqueue: Enqueue, queue: str, actor: str, ids: Iterable[int]
+) -> None:
+    """Воркер должен увидеть записи в БД, поэтому сообщения уходят после коммита."""
+    pending = list(ids)
+
+    def send(_: Session) -> None:
+        for item_id in pending:
+            enqueue(queue, actor, item_id)
+
+    event.listen(db, "after_commit", send, once=True)

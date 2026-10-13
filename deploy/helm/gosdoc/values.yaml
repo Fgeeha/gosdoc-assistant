@@ -1,0 +1,110 @@
+# Чарт разворачивает только приложение (ADR-0009). PostgreSQL, Redis, RabbitMQ,
+# Elasticsearch, Milvus, S3 (SeaweedFS), Inference, LDAP — заказанные сервисы
+# платформы ЦИТ: их адреса — в config, пароли — в Secret.
+
+image:
+  registry: ""            # реестр в контуре, например registry.fgau.local/gosdoc
+  tag: ""                 # по умолчанию — appVersion чарта
+  pullPolicy: IfNotPresent
+  pullSecrets: []         # [{name: registry-cred}]
+
+# Несекретные параметры — переменные окружения приложения (см. .env.example).
+config:
+  ENVIRONMENT: prod
+  LOG_LEVEL: INFO
+  VECTOR_STORE: milvus
+  STORAGE_BACKEND: s3
+  S3_BUCKET: gosdoc
+  S3_REGION: us-east-1
+  FILE_RETENTION_DAYS: "30"
+  LLM_MODEL: ""
+  LLM_MAX_CONTEXT: "8192"
+  EMBEDDINGS_MODEL: ""
+  AUTH_PROVIDER: local
+  SESSION_COOKIE_SECURE: "true"
+  # Адреса сервисов (*.fgau.local) — задаются при установке:
+  REDIS_URL: ""             # rediss://redis.<домен>:6380/0 (пароль — в Secret, если в URL)
+  ELASTICSEARCH_URL: ""
+  VECTOR_STORE_URL: ""
+  S3_ENDPOINT_URL: ""
+  LLM_BASE_URL: ""
+  EMBEDDINGS_BASE_URL: ""
+  LDAP_URL: ""
+  LDAP_USER_DN_TEMPLATE: ""
+  LDAP_SEARCH_BASE: ""
+  MLFLOW_URL: ""
+
+# Секреты: либо имя готового Secret, либо значения (создаётся Secret чарта).
+# Ключи: DATABASE_URL, RABBITMQ_URL, S3_ACCESS_KEY, S3_SECRET_KEY, LLM_API_KEY,
+# EMBEDDINGS_API_KEY, SERVICE_TOKEN, MLFLOW_TOKEN, GOSDOC_ADMIN_PASSWORD.
+existingSecret: ""
+secret: {}
+
+# Локальный корневой CA (TLS к БД, S3, Inference, LDAP): из Secret или ConfigMap.
+caBundle:
+  secretName: ""
+  configMapName: ""
+  key: ca.pem
+  mountPath: /etc/gosdoc/ca
+
+api:
+  replicas: 2
+  # Доверять X-Forwarded-For только от frontend (nginx); NetworkPolicy пускает к api
+  # только его, поэтому "*" безопасно. Без NetworkPolicy — укажите подсеть подов.
+  forwardedAllowIps: "*"
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {cpu: "2", memory: 1Gi}
+
+worker:
+  replicas: 2
+  # Очереди: tables, letters, docs_check, npa, maintenance. Можно разнести по
+  # отдельным Deployment, задав несколько элементов.
+  groups:
+    - name: default
+      queues: [tables, letters, docs_check, npa, maintenance]
+      processes: 2
+      threads: 4
+  resources:
+    requests: {cpu: 500m, memory: 1Gi}
+    limits: {cpu: "4", memory: 4Gi}
+
+frontend:
+  replicas: 2
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+
+migrations:
+  enabled: true
+  initStorage: true       # создать бакет S3, если его нет
+  createAdmin: true       # создать admin при первом запуске (пароль — GOSDOC_ADMIN_PASSWORD)
+
+waitDeps:
+  timeoutSeconds: 300
+
+ingress:
+  enabled: true
+  className: nginx
+  host: gosdoc.fgau.local
+  tlsSecretName: ""       # сертификат, выпущенный локальным CA
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 60m
+
+networkPolicy:
+  enabled: true
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+  seccompProfile: {type: RuntimeDefault}
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: {drop: [ALL]}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

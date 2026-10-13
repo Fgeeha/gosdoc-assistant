@@ -1,0 +1,34 @@
+{{- range $g := .Values.worker.groups }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gosdoc.fullname" $ }}-worker-{{ $g.name }}
+  labels: {{- include "gosdoc.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ $g.replicas | default $.Values.worker.replicas }}
+  selector:
+    matchLabels: {{- include "gosdoc.selector" (dict "root" $ "component" (printf "worker-%s" $g.name)) | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "gosdoc.selector" (dict "root" $ "component" (printf "worker-%s" $g.name)) | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/config.yaml") $ | sha256sum }}
+    spec:
+      {{- include "gosdoc.pod" $ | nindent 6 }}
+      initContainers:
+        {{- include "gosdoc.waitInit" (dict "root" $ "deps" "postgres,rabbitmq,storage" "migrations" true) | nindent 8 }}
+      # Пробы не HTTP: dramatiq сам перезапускает упавшие процессы, а при потере
+      # брокера главный процесс завершается и под перезапускается Kubernetes.
+      containers:
+        - name: worker
+          image: {{ include "gosdoc.image" (dict "root" $ "name" "worker") }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          args: {{ concat (list "dramatiq" "workers.actors" "--processes" (toString $g.processes) "--threads" (toString $g.threads) "--queues") $g.queues | toJson }}
+          {{- include "gosdoc.env" $ | nindent 10 }}
+          {{- include "gosdoc.mounts" $ | nindent 10 }}
+          securityContext: {{- toYaml $.Values.containerSecurityContext | nindent 12 }}
+          resources: {{- toYaml $.Values.worker.resources | nindent 12 }}
+      volumes: {{- include "gosdoc.volumes" $ | nindent 8 }}
+{{- end }}

@@ -18,7 +18,7 @@ dramatiq.set_broker(get_broker())
 
 
 @dramatiq.actor(queue_name="maintenance", max_retries=3)
-def cleanup_files() -> None:
+def cleanup_files(_: int = 0) -> None:
     cleanup_expired_files(get_sessionmaker(), get_storage())
 
 

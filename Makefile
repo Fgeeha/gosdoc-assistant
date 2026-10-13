@@ -13,9 +13,11 @@ PIP_INDEX_URL ?= https://pypi.org/simple
 NPM_REGISTRY ?= https://registry.npmjs.org/
 IMAGE_PREFIX ?= gosdoc
 IMAGE_TAG ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
+CHART := deploy/helm/gosdoc
+HELM ?= docker run --rm -v $(CURDIR)/$(CHART):/chart alpine/helm:3.16.4
 
 .PHONY: help install install-ci run run-worker run-mock-llm run-frontend lint format test \
-        test-unit check migrate migration up-local down-local logs-local images clean
+        test-unit check migrate helm-lint migration up-local down-local logs-local images clean
 
 help: ## Показать список целей
 	@grep -hE '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) \
@@ -97,6 +99,12 @@ images: ## Собрать прод-образы (BASE_IMAGE=... для РЕД О
 	    --build-arg NPM_REGISTRY=$(NPM_REGISTRY) \
 	    -t $(IMAGE_PREFIX)-$$t:$(IMAGE_TAG) . || exit 1; \
 	done
+
+# --- Kubernetes --------------------------------------------------------------
+
+helm-lint: ## Проверить Helm-чарт (lint и рендер с примером значений)
+	$(HELM) lint /chart --set secret.DATABASE_URL=x
+	$(HELM) template gosdoc /chart -f /chart/values-example.yaml > /dev/null
 
 # --- Обслуживание ------------------------------------------------------------
 
