@@ -30,20 +30,20 @@ class FileOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-def _can_read(db: Session, user: User, f: StoredFile) -> bool:
-    """Свой файл; руководитель — также файлы сотрудников своего подразделения."""
-    if f.owner_id == user.id:
+def can_view(db: Session, user: User, owner_id: int | None) -> bool:
+    """Своё; руководитель — также работы сотрудников своего подразделения."""
+    if owner_id == user.id:
         return True
-    if "manager" not in user.roles or not user.department or f.owner_id is None:
+    if "manager" not in user.roles or not user.department or owner_id is None:
         return False
-    owner = db.get(User, f.owner_id)
+    owner = db.get(User, owner_id)
     return owner is not None and owner.department == user.department
 
 
 def readable_file(db: Session, user: User, file_id: int) -> StoredFile:
     f = OrgRepository(StoredFile, db, user.organization_id).get(file_id)
     # Чужой файл и несуществующий неразличимы для пользователя.
-    if f is None or not _can_read(db, user, f):
+    if f is None or not can_view(db, user, f.owner_id):
         raise HTTPException(404, "Файл не найден")
     return f
 

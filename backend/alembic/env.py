@@ -1,7 +1,8 @@
 from alembic import context
 from gosdoc.core.config import get_settings
 from gosdoc.core.db import Base
-from gosdoc.tables import models as _tables  # noqa: F401 — регистрирует таблицы модуля
+from gosdoc.letters import models as _letters  # noqa: F401 — регистрирует таблицы модулей
+from gosdoc.tables import models as _tables  # noqa: F401
 from sqlalchemy import create_engine
 
 target_metadata = Base.metadata

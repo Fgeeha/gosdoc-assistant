@@ -7,6 +7,7 @@ from gosdoc.core.files import cleanup_expired_files
 from gosdoc.core.logging import setup_logging
 from gosdoc.core.queue import get_broker
 from gosdoc.core.storage import get_storage
+from gosdoc.letters.service import run_pdf_job
 from gosdoc.tables.service import run_table_job
 
 _settings = get_settings()
@@ -23,3 +24,8 @@ def cleanup_files() -> None:
 @dramatiq.actor(queue_name="tables", max_retries=0, time_limit=30 * 60 * 1000)
 def process_table_job(job_id: int) -> None:
     run_table_job(get_sessionmaker(), get_storage(), get_settings(), job_id)
+
+
+@dramatiq.actor(queue_name="letters", max_retries=0, time_limit=5 * 60 * 1000)
+def process_letter_pdf(job_id: int) -> None:
+    run_pdf_job(get_sessionmaker(), get_storage(), get_settings(), job_id)

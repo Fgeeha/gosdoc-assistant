@@ -7,6 +7,7 @@ from gosdoc.api import admin, auth, files
 from gosdoc.core.config import get_settings
 from gosdoc.core.health import CRITICAL, check_dependencies
 from gosdoc.core.logging import setup_logging
+from gosdoc.letters import api as letters
 from gosdoc.tables import api as tables
 
 
@@ -20,7 +21,15 @@ def create_app() -> FastAPI:
         redoc_url=None,
         openapi_url=None if s.environment == "prod" else "/api/openapi.json",
     )
-    for r in (auth.router, admin.router, files.router, tables.router):
+    routers = (
+        auth.router,
+        admin.router,
+        files.router,
+        tables.router,
+        letters.router,
+        letters.blanks_router,
+    )
+    for r in routers:
         app.include_router(r)
 
     @app.get("/health/live", include_in_schema=False)

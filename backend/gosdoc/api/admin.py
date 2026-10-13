@@ -1,6 +1,7 @@
 """Администрирование: пользователи и журнал аудита (роль sys_admin)."""
 
-from datetime import datetime
+import re
+from datetime import date, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -16,8 +17,9 @@ from gosdoc.core.auth import (
     new_local_user,
     validate_roles,
 )
-from gosdoc.core.db import AuditLog, User, get_db
+from gosdoc.core.db import AuditLog, Organization, User, get_db
 from gosdoc.core.repository import OrgRepository
+from gosdoc.letters.models import Holiday
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 admin_only = require_roles("sys_admin")
@@ -176,3 +178,130 @@ def list_audit(
     return OrgRepository(AuditLog, db, admin.organization_id).list(
         *criteria, order_by=AuditLog.id.desc(), limit=min(limit, 1000), offset=offset
     )
+
+
+# --- Настройки организации и производственный календарь -------------------------
+
+
+class BlankSettings(BaseModel):
+    org_name: str = Field(default="", max_length=500)
+    details: list[str] = Field(default_factory=list, max_length=10)  # адрес, телефон, e-mail
+
+
+class OrgSettings(BaseModel):
+    blank: BlankSettings = Field(default_factory=BlankSettings)
+    # Маска исходящего номера — регулярное выражение, например ^\d{2}-\d{2}/\d+$.
+    outgoing_number_pattern: str = Field(default="", max_length=200)
+    outgoing_number_example: str = Field(default="", max_length=100)
+    signer_position: str = Field(default="", max_length=300)
+    signer_name: str = Field(default="", max_length=200)
+
+    @field_validator("outgoing_number_pattern")
+    @classmethod
+    def _regex(cls, v: str) -> str:
+        try:
+            re.compile(v)
+        except re.error as e:
+            raise ValueError(f"Маска номера — некорректное регулярное выражение: {e}") from e
+        return v
+
+
+class OrgOut(BaseModel):
+    id: int
+    name: str
+    short_name: str
+    settings: OrgSettings
+
+
+class HolidayIn(BaseModel):
+    date: date
+    is_workday: bool = False
+    note: str = Field(default="", max_length=200)
+
+
+class HolidayOut(HolidayIn):
+    model_config = {"from_attributes": True}
+
+
+def _org(db: Session, admin: User) -> Organization:
+    org = db.get(Organization, admin.organization_id)
+    if org is None:
+        raise HTTPException(404, "Организация не найдена")
+    return org
+
+
+@router.get("/organization", response_model=OrgOut)
+def get_organization(
+    db: Session = Depends(get_db, scope="function"), admin: User = Depends(admin_only)
+) -> OrgOut:
+    org = _org(db, admin)
+    return OrgOut(
+        id=org.id,
+        name=org.name,
+        short_name=org.short_name,
+        settings=OrgSettings.model_validate(org.settings or {}),
+    )
+
+
+@router.put("/organization", response_model=OrgOut)
+def update_organization(
+    body: OrgSettings,
+    request: Request,
+    db: Session = Depends(get_db, scope="function"),
+    admin: User = Depends(admin_only),
+) -> OrgOut:
+    org = _org(db, admin)
+    org.settings = {**(org.settings or {}), **body.model_dump()}
+    audit_request(
+        db,
+        request,
+        admin,
+        "organization.settings_updated",
+        object_type="organization",
+        object_id=org.id,
+    )
+    return OrgOut(id=org.id, name=org.name, short_name=org.short_name, settings=body)
+
+
+@router.get("/holidays", response_model=list[HolidayOut])
+def list_holidays(
+    year: int | None = None,
+    db: Session = Depends(get_db, scope="function"),
+    _: User = Depends(admin_only),
+) -> list[Holiday]:
+    stmt = select(Holiday).order_by(Holiday.date)
+    if year:
+        stmt = stmt.where(Holiday.date >= date(year, 1, 1), Holiday.date <= date(year, 12, 31))
+    return list(db.scalars(stmt))
+
+
+@router.put("/holidays", response_model=HolidayOut)
+def set_holiday(
+    body: HolidayIn,
+    request: Request,
+    db: Session = Depends(get_db, scope="function"),
+    admin: User = Depends(admin_only),
+) -> Holiday:
+    """Отклонение от календаря по умолчанию (перенос выходного, рабочая суббота)."""
+    h = db.merge(Holiday(date=body.date, is_workday=body.is_workday, note=body.note))
+    audit_request(db, request, admin, "calendar.updated", details=body.model_dump(mode="json"))
+    return h
+
+
+@router.delete("/holidays/{day}", status_code=204)
+def delete_holiday(
+    day: date,
+    request: Request,
+    db: Session = Depends(get_db, scope="function"),
+    admin: User = Depends(admin_only),
+) -> None:
+    h = db.get(Holiday, day)
+    if h is not None:
+        db.delete(h)
+        audit_request(
+            db,
+            request,
+            admin,
+            "calendar.updated",
+            details={"date": day.isoformat(), "removed": True},
+        )

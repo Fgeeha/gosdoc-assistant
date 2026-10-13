@@ -144,7 +144,7 @@ python-docx не поддерживает. В MVP — только примеч�
 1. Вход: входящее письмо (файл, текст извлекается как в 4.1) и/или описание
    задачи, тип письма, выбранный бланк.
 2. LLM получает тип письма, описание, извлечённый текст входящего и шаблон
-   структуры (из `rag/prompts/letters/<тип>.yaml`) → возвращает **только
+   структуры (из `backend/gosdoc/letters/prompts/<тип>.yaml` — промпты входят в образ) → возвращает **только
    смысловые блоки** (обращение, основной текст, заключение) в JSON.
 3. Реквизиты (бланк, дата, исх. номер, ссылка на входящий, адресат, подпись,
    отметка об исполнителе) подставляются кодом. Исходящий номер вводится
@@ -239,7 +239,7 @@ erDiagram
 | `letter_blanks` | id, organization_id, name, template_file_id, fields jsonb, uploaded_by, active | 4 |
 | `letters` | id, organization_id, type, blank_id, incoming_file_id, outgoing_number, date, addressee, executor, deadline, status, is_draft | 4 |
 | `letter_versions` | id, letter_id, version, body jsonb, author_id (null = LLM), docx_file_id, pdf_file_id, created_at | 4 |
-| `holidays` | date, organization_id (null = общий), is_workday | 4 |
+| `holidays` | date, is_workday, note — только отклонения от календаря по умолчанию (сб, вс, ст. 112 ТК РФ); календарь федеральный, общий | 4 |
 | `npa_acts` | id, organization_id (null = общий), kind, number, adopted_at, title, issuer, repealed_at, canonical_key | 5 |
 | `npa_editions` | id, act_id, effective_from, effective_to, source_file_id, text_sha256 | 5 |
 | `npa_chunks` | id, edition_id, path (`ст. 12 ч. 1 п. 3`), text, vector_id | 5 |
