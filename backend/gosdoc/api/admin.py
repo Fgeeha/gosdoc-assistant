@@ -83,7 +83,9 @@ class AuditOut(BaseModel):
 
 
 @router.get("/users", response_model=list[UserOut])
-def list_users(db: Session = Depends(get_db), admin: User = Depends(admin_only)) -> list[User]:
+def list_users(
+    db: Session = Depends(get_db, scope="function"), admin: User = Depends(admin_only)
+) -> list[User]:
     return OrgRepository(User, db, admin.organization_id).list(order_by=User.login, limit=1000)
 
 
@@ -91,7 +93,7 @@ def list_users(db: Session = Depends(get_db), admin: User = Depends(admin_only))
 def create_user(
     body: UserCreate,
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db, scope="function"),
     admin: User = Depends(admin_only),
 ) -> User:
     # Логин уникален во всей системе, а не в организации, поэтому проверка без
@@ -126,7 +128,7 @@ def patch_user(
     user_id: int,
     body: UserPatch,
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db, scope="function"),
     sessions: SessionStore = Depends(get_session_store),
     admin: User = Depends(admin_only),
 ) -> User:
@@ -167,7 +169,7 @@ def list_audit(
     limit: int = 100,
     offset: int = 0,
     action: str | None = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db, scope="function"),
     admin: User = Depends(admin_only),
 ) -> list[AuditLog]:
     criteria = [AuditLog.action == action] if action else []

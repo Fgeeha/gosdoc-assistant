@@ -6,6 +6,7 @@ import AuditPage from "./pages/AuditPage";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
 import HomePage from "./pages/HomePage";
 import LoginPage from "./pages/LoginPage";
+import TablesPage from "./pages/tables/TablesPage";
 import UsersPage from "./pages/UsersPage";
 
 export default function App() {
@@ -26,6 +27,7 @@ export default function App() {
   const isAdmin = me.roles.includes("sys_admin");
   const items = [
     { key: "/", label: <Link to="/">Главная</Link> },
+    { key: "/tables", label: <Link to="/tables">Таблицы</Link> },
     ...(isAdmin
       ? [
           { key: "/admin/users", label: <Link to="/admin/users">Пользователи</Link> },
@@ -53,6 +55,7 @@ export default function App() {
       <Layout.Content style={{ padding: 24, maxWidth: 1200, width: "100%", margin: "0 auto" }}>
         <Routes>
           <Route path="/" element={<HomePage />} />
+          <Route path="/tables" element={<TablesPage />} />
           <Route path="/password" element={<ChangePasswordPage onDone={() => setMe(null)} />} />
           {isAdmin && <Route path="/admin/users" element={<UsersPage me={me} />} />}
           {isAdmin && <Route path="/admin/audit" element={<AuditPage />} />}

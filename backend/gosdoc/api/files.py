@@ -40,7 +40,7 @@ def _can_read(db: Session, user: User, f: StoredFile) -> bool:
     return owner is not None and owner.department == user.department
 
 
-def _own_file(db: Session, user: User, file_id: int) -> StoredFile:
+def readable_file(db: Session, user: User, file_id: int) -> StoredFile:
     f = OrgRepository(StoredFile, db, user.organization_id).get(file_id)
     # Чужой файл и несуществующий неразличимы для пользователя.
     if f is None or not _can_read(db, user, f):
@@ -52,7 +52,7 @@ def _own_file(db: Session, user: User, file_id: int) -> StoredFile:
 def upload(
     file: UploadFile,
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db, scope="function"),
     user: User = Depends(current_user),
     storage: FileStorage = Depends(get_storage),
 ) -> StoredFile:
@@ -86,20 +86,22 @@ def upload(
 
 @router.get("/{file_id}", response_model=FileOut)
 def meta(
-    file_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)
+    file_id: int,
+    db: Session = Depends(get_db, scope="function"),
+    user: User = Depends(current_user),
 ) -> StoredFile:
-    return _own_file(db, user, file_id)
+    return readable_file(db, user, file_id)
 
 
 @router.get("/{file_id}/content")
 def download(
     file_id: int,
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db, scope="function"),
     user: User = Depends(current_user),
     storage: FileStorage = Depends(get_storage),
 ) -> Response:
-    f = _own_file(db, user, file_id)
+    f = readable_file(db, user, file_id)
     audit_request(db, request, user, "file.downloaded", object_type="file", object_id=f.id)
     return Response(
         storage.get(f.storage_key),
