@@ -14,8 +14,8 @@ NPM_REGISTRY ?= https://registry.npmjs.org/
 IMAGE_PREFIX ?= gosdoc
 IMAGE_TAG ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 
-.PHONY: help install run run-worker run-mock-llm run-frontend lint format test test-unit \
-        check precommit migrate migration up-local down-local logs-local images clean
+.PHONY: help install install-ci run run-worker run-mock-llm run-frontend lint format test \
+        test-unit check migrate migration up-local down-local logs-local images clean
 
 help: ## Показать список целей
 	@grep -hE '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) \
@@ -26,6 +26,14 @@ help: ## Показать список целей
 install: ## Установить зависимости backend и frontend
 	uv sync
 	cd frontend && npm ci --no-audit --no-fund
+
+# В uv.lock прямые ссылки на pypi: версии и хеши берём из lock, пакеты — из
+# зеркала UV_INDEX_URL. Дальше uv run должен идти с UV_NO_SYNC=1.
+install-ci: ## Установить зависимости из зеркала PyPI (CI в контуре)
+	uv export --frozen -o requirements-ci.txt
+	uv venv
+	uv pip install --require-hashes -r requirements-ci.txt
+	uv pip install --no-deps -e .
 
 # --- Запуск без Docker (зависимости — из up-local или свои) ------------------
 

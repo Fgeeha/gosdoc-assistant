@@ -8,22 +8,19 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from gosdoc.api.deps import client_ip, require_roles
-from gosdoc.core.audit import audit
-from gosdoc.core.auth import ROLES, AuthError, check_password_policy, hash_password
-from gosdoc.core.config import get_settings
+from gosdoc.api.deps import audit_request, check_new_password, require_roles
+from gosdoc.core.auth import (
+    SessionStore,
+    get_session_store,
+    hash_password,
+    new_local_user,
+    validate_roles,
+)
 from gosdoc.core.db import AuditLog, User, get_db
 from gosdoc.core.repository import OrgRepository
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 admin_only = require_roles("sys_admin")
-
-
-def _check_roles(v: list[str]) -> list[str]:
-    unknown = set(v) - set(ROLES)
-    if unknown:
-        raise ValueError(f"Неизвестные роли: {', '.join(sorted(unknown))}")
-    return sorted(set(v))
 
 
 class UserOut(BaseModel):
@@ -43,25 +40,33 @@ class UserOut(BaseModel):
 class UserCreate(BaseModel):
     login: str = Field(min_length=2, max_length=100, pattern=r"^[A-Za-z0-9._-]+$")
     full_name: str = Field(min_length=1, max_length=300)
-    department: str | None = None
+    department: str | None = Field(None, max_length=300)
     roles: list[str] = ["user"]
     password: str  # временный, при первом входе пользователь его сменит
 
-    _roles = field_validator("roles")(_check_roles)
+    _roles = field_validator("roles")(validate_roles)
 
 
 class UserPatch(BaseModel):
-    full_name: str | None = None
-    department: str | None = None
+    # Не переданное поле не меняется; full_name, roles и is_active нельзя обнулить.
+    full_name: str | None = Field(None, min_length=1, max_length=300)
+    department: str | None = Field(None, max_length=300)
     roles: list[str] | None = None
     is_active: bool | None = None
     unlock: bool = False
     new_password: str | None = None
 
+    @field_validator("full_name", "roles", "is_active")
+    @classmethod
+    def _not_null(cls, v: Any) -> Any:
+        if v is None:
+            raise ValueError("Поле не может быть пустым")
+        return v
+
     @field_validator("roles")
     @classmethod
-    def _roles(cls, v: list[str] | None) -> list[str] | None:
-        return None if v is None else _check_roles(v)
+    def _roles(cls, v: list[str]) -> list[str]:
+        return validate_roles(v)
 
 
 class AuditOut(BaseModel):
@@ -89,33 +94,28 @@ def create_user(
     db: Session = Depends(get_db),
     admin: User = Depends(admin_only),
 ) -> User:
+    # Логин уникален во всей системе, а не в организации, поэтому проверка без
+    # фильтра по организации (ADR-0006): раскрывается только факт занятости логина.
     if db.scalar(select(User.id).where(User.login == body.login)):
         raise HTTPException(409, "Пользователь с таким логином уже есть")
-    try:
-        check_password_policy(body.password, get_settings())
-    except AuthError as e:
-        raise HTTPException(400, str(e)) from e
+    check_new_password(body.password)
     user = OrgRepository(User, db, admin.organization_id).add(
-        User(
+        new_local_user(
+            organization_id=admin.organization_id,
             login=body.login,
             full_name=body.full_name,
             department=body.department,
             roles=body.roles,
-            password_hash=hash_password(body.password),
-            auth_source="local",
-            must_change_password=True,
-            failed_attempts=0,
-            is_active=True,
+            password=body.password,
         )
     )
-    audit(
+    audit_request(
         db,
-        organization_id=admin.organization_id,
-        user_id=admin.id,
-        action="user.created",
+        request,
+        admin,
+        "user.created",
         object_type="user",
         object_id=user.id,
-        ip=client_ip(request),
         details={"login": user.login, "roles": user.roles},
     )
     return user
@@ -127,6 +127,7 @@ def patch_user(
     body: UserPatch,
     request: Request,
     db: Session = Depends(get_db),
+    sessions: SessionStore = Depends(get_session_store),
     admin: User = Depends(admin_only),
 ) -> User:
     user = OrgRepository(User, db, admin.organization_id).get(user_id)
@@ -144,20 +145,18 @@ def patch_user(
     if body.new_password:
         if user.auth_source != "local":
             raise HTTPException(400, "Пароль пользователя AD меняется в службе каталогов")
-        try:
-            check_password_policy(body.new_password, get_settings())
-        except AuthError as e:
-            raise HTTPException(400, str(e)) from e
+        check_new_password(body.new_password)
         user.password_hash = hash_password(body.new_password)
         user.must_change_password = True
-    audit(
+    if body.new_password or body.is_active is False or body.roles is not None:
+        sessions.revoke_user(user.id)
+    audit_request(
         db,
-        organization_id=admin.organization_id,
-        user_id=admin.id,
-        action="user.updated",
+        request,
+        admin,
+        "user.updated",
         object_type="user",
         object_id=user.id,
-        ip=client_ip(request),
         details={**changes, "unlock": body.unlock, "password_reset": bool(body.new_password)},
     )
     return user

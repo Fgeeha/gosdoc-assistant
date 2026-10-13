@@ -19,11 +19,16 @@ ENV UV_INDEX_URL=${PIP_INDEX_URL} UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy \
 RUN python3 -m venv /opt/uv && /opt/uv/bin/pip install --index-url "${PIP_INDEX_URL}" uv
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
-RUN /opt/uv/bin/uv sync --frozen --no-dev --no-install-project
+# uv.lock хранит прямые ссылки на files.pythonhosted.org, и `uv sync` качал бы по
+# ним. Поэтому версии и хеши берём из lock, а пакеты — из зеркала PIP_INDEX_URL.
+RUN /opt/uv/bin/uv export --frozen --no-dev --no-emit-project -o /tmp/requirements.txt \
+    && /opt/uv/bin/uv venv /app/.venv \
+    && /opt/uv/bin/uv pip install --python /app/.venv/bin/python --require-hashes \
+       -r /tmp/requirements.txt
 COPY backend backend
 COPY workers workers
 COPY alembic.ini README.md ./
-RUN /opt/uv/bin/uv sync --frozen --no-dev
+RUN /opt/uv/bin/uv pip install --python /app/.venv/bin/python --no-deps -e .
 
 # --- API --------------------------------------------------------------------
 FROM python-base AS api
@@ -32,12 +37,16 @@ WORKDIR /app
 COPY --from=builder --chown=10001 /app /app
 USER 10001
 EXPOSE 8000
+# Адрес клиента берётся из X-Forwarded-For только от доверенного прокси:
+# FORWARDED_ALLOW_IPS задаётся при развёртывании (адрес/подсеть nginx).
 CMD ["uvicorn", "gosdoc.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
 
 # --- Воркер: + Tesseract (rus) и LibreOffice --------------------------------
-FROM api AS worker
-USER root
-RUN os-packages.sh worker
+# Пакеты ОС ставятся до копирования кода, чтобы тяжёлый слой не пересобирался.
+FROM python-base AS worker
+RUN os-packages.sh worker && useradd --system --uid 10001 --home-dir /app gosdoc
+WORKDIR /app
+COPY --from=builder --chown=10001 /app /app
 USER 10001
 CMD ["dramatiq", "workers.actors", "--processes", "2", "--threads", "4"]
 

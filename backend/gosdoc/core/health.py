@@ -13,7 +13,6 @@ from sqlalchemy import text
 from gosdoc.core.auth import get_redis
 from gosdoc.core.config import Settings
 from gosdoc.core.db import get_engine
-from gosdoc.core.llm import LLMClient
 from gosdoc.core.storage import get_storage
 
 log = logging.getLogger(__name__)
@@ -38,9 +37,13 @@ def _checks(s: Settings) -> dict[str, Callable[[], None]]:
             params.ssl_options = pika.SSLOptions(ssl.create_default_context(cafile=s.ca_bundle))
         pika.BlockingConnection(params).close()
 
-    def http(url: str) -> Callable[[], None]:
+    def http(url: str, token: str | None = None) -> Callable[[], None]:
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+
         def check() -> None:
-            httpx.get(url, timeout=s.deps_check_timeout_s, verify=verify).raise_for_status()
+            httpx.get(
+                url, headers=headers, timeout=s.deps_check_timeout_s, verify=verify
+            ).raise_for_status()
 
         return check
 
@@ -54,7 +57,17 @@ def _checks(s: Settings) -> dict[str, Callable[[], None]]:
         "storage": lambda: get_storage().ping(),
         "elasticsearch": http(s.elasticsearch_url),
         "vector_store": http(s.vector_store_url.rstrip("/") + _VECTOR_HEALTH_PATH[s.vector_store]),
-        "llm": lambda: LLMClient(s).ping(),
+        "llm": http(s.llm_base_url.rstrip("/") + "/models", s.llm_api_key),
+        **(
+            {
+                "embeddings": http(
+                    s.embeddings_base_url.rstrip("/") + "/models",
+                    s.embeddings_api_key or s.llm_api_key,
+                )
+            }
+            if s.embeddings_base_url
+            else {}
+        ),
     }
 
 

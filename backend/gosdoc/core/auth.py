@@ -2,7 +2,9 @@
 
 import contextlib
 import json
+import logging
 import secrets
+import ssl
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -12,6 +14,7 @@ from typing import Protocol
 import ldap3
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
+from ldap3.core.exceptions import LDAPException
 from ldap3.utils.conv import escape_filter_chars
 from redis import Redis
 from sqlalchemy import select
@@ -20,6 +23,7 @@ from sqlalchemy.orm import Session
 from gosdoc.core.config import Settings, get_settings
 from gosdoc.core.db import User
 
+log = logging.getLogger(__name__)
 ROLES = ("user", "manager", "npa_admin", "sys_admin")
 _hasher = PasswordHasher()
 _DUMMY_HASH = _hasher.hash("dummy-password-for-timing")
@@ -38,6 +42,37 @@ def check_password_policy(password: str, s: Settings) -> None:
         raise AuthError(f"Пароль должен быть не короче {s.auth_min_password_length} символов")
     if password.isdigit() or password.isalpha():
         raise AuthError("Пароль должен содержать буквы и цифры")
+
+
+def validate_roles(roles: list[str]) -> list[str]:
+    unknown = set(roles) - set(ROLES)
+    if unknown:
+        raise ValueError(f"Неизвестные роли: {', '.join(sorted(unknown))}")
+    return sorted(set(roles))
+
+
+def new_local_user(
+    *,
+    organization_id: int,
+    login: str,
+    full_name: str,
+    roles: list[str],
+    password: str,
+    department: str | None = None,
+) -> User:
+    """Локальный пользователь с временным паролем: при первом входе он его сменит."""
+    return User(
+        organization_id=organization_id,
+        login=login,
+        full_name=full_name,
+        department=department,
+        roles=roles,
+        password_hash=hash_password(password),
+        auth_source="local",
+        must_change_password=True,
+        failed_attempts=0,
+        is_active=True,
+    )
 
 
 def _burn_time(password: str) -> None:
@@ -101,27 +136,32 @@ class LdapAuthProvider:
         self.connect = connection_factory or self._default_connection
 
     def _default_connection(self, user_dn: str, password: str) -> ldap3.Connection:
-        tls = ldap3.Tls(ca_certs_file=self.s.ca_bundle) if self.s.ca_bundle else None
+        # Сертификат сервера проверяется всегда: локальным CA, если задан, иначе системными.
+        tls = ldap3.Tls(validate=ssl.CERT_REQUIRED, ca_certs_file=self.s.ca_bundle)
         server = ldap3.Server(self.s.ldap_url, tls=tls, connect_timeout=5)
         return ldap3.Connection(server, user=user_dn, password=password, read_only=True)
 
     def authenticate(self, db: Session, login: str, password: str) -> User:
         if not login or not password:  # пустой пароль в LDAP = анонимный bind
             raise AuthError("Неверный логин или пароль")
-        conn = self.connect(self.s.ldap_user_dn_template.format(login=login), password)
-        if not conn.bind():
-            raise AuthError("Неверный логин или пароль")
         try:
-            conn.search(
-                self.s.ldap_search_base,
-                self.s.ldap_user_filter.format(login=escape_filter_chars(login)),
-                attributes=["displayName", "department", "memberOf"],
-            )
-            if not conn.entries:
-                raise AuthError("Пользователь не найден в каталоге")
-            entry = conn.entries[0]
-        finally:
-            conn.unbind()
+            conn = self.connect(self.s.ldap_user_dn_template.format(login=login), password)
+            if not conn.bind():
+                raise AuthError("Неверный логин или пароль")
+            try:
+                conn.search(
+                    self.s.ldap_search_base,
+                    self.s.ldap_user_filter.format(login=escape_filter_chars(login)),
+                    attributes=["displayName", "department", "memberOf"],
+                )
+                if not conn.entries:
+                    raise AuthError("Пользователь не найден в каталоге")
+                entry = conn.entries[0]
+            finally:
+                conn.unbind()
+        except LDAPException as e:
+            log.warning("Служба каталогов недоступна: %s", e)
+            raise AuthError("Служба каталогов недоступна, попробуйте позже") from e
 
         groups = [str(g) for g in entry.memberOf.values] if "memberOf" in entry else []
         roles = sorted(
@@ -167,9 +207,14 @@ class SessionData:
 
 
 class SessionStore:
-    """Сессия — случайный токен в Redis с TTL; отзывается удалением ключа."""
+    """Сессия — случайный токен в Redis с TTL; отзывается удалением ключа.
+
+    Токены пользователя дополнительно лежат в множестве `user_sessions:<id>`,
+    чтобы при смене пароля или отключении отозвать все его сессии.
+    """
 
     PREFIX = "session:"
+    USER_PREFIX = "user_sessions:"
 
     def __init__(self, redis: Redis, ttl_minutes: int) -> None:
         self.redis = redis
@@ -178,18 +223,30 @@ class SessionStore:
     def create(self, user: User) -> str:
         token = secrets.token_urlsafe(32)
         data = {"user_id": user.id, "organization_id": user.organization_id}
-        self.redis.set(self.PREFIX + token, json.dumps(data), ex=self.ttl)
+        index = f"{self.USER_PREFIX}{user.id}"
+        pipe = self.redis.pipeline()
+        pipe.set(self.PREFIX + token, json.dumps(data), ex=self.ttl)
+        pipe.sadd(index, token)
+        pipe.expire(index, self.ttl)
+        pipe.execute()
         return token
 
     def get(self, token: str) -> SessionData | None:
         raw = self.redis.get(self.PREFIX + token)
         if raw is None:
             return None
+        data = SessionData(**json.loads(raw))
         self.redis.expire(self.PREFIX + token, self.ttl)  # скользящий срок
-        return SessionData(**json.loads(raw))
+        self.redis.expire(f"{self.USER_PREFIX}{data.user_id}", self.ttl)
+        return data
 
     def delete(self, token: str) -> None:
         self.redis.delete(self.PREFIX + token)
+
+    def revoke_user(self, user_id: int) -> None:
+        index = f"{self.USER_PREFIX}{user_id}"
+        tokens = [t.decode() if isinstance(t, bytes) else t for t in self.redis.smembers(index)]
+        self.redis.delete(index, *(self.PREFIX + t for t in tokens))
 
 
 @lru_cache

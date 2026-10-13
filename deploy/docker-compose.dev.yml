@@ -117,8 +117,11 @@ services:
   api:
     build: { <<: *build, target: api }
     image: gosdoc-api:dev
-    environment: *app-env
-    command: uvicorn gosdoc.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/backend
+    environment:
+      <<: *app-env
+      # API доступно только из внутренней сети через nginx, ему и доверяем X-Forwarded-For.
+      FORWARDED_ALLOW_IPS: "*"
+    command: uvicorn gosdoc.main:app --host 0.0.0.0 --port 8000 --proxy-headers --reload --reload-dir /app/backend
     volumes: [../backend:/app/backend:ro]
     depends_on:
       migrate: { condition: service_completed_successfully }
@@ -136,10 +139,21 @@ services:
       migrate: { condition: service_completed_successfully }
     networks: [core]
 
+  # Автоудаление файлов с истёкшим сроком хранения (в проде — Airflow/CronJob).
+  scheduler:
+    image: gosdoc-api:dev
+    pull_policy: never
+    environment: *app-env
+    command: gosdoc cleanup-files --every 3600
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    networks: [core]
+
   frontend:
     build: { <<: *build, target: frontend }
     image: gosdoc-frontend:dev
     ports: ["${HTTP_PORT:-8080}:8080"]
     depends_on:
-      api: { condition: service_healthy }
+      # restart: nginx запоминает IP api при старте — перезапускаем вместе с api.
+      api: { condition: service_healthy, restart: true }
     networks: [core, edge]

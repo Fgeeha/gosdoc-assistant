@@ -1,10 +1,13 @@
 """Конфигурация приложения: только переменные окружения (и .env в разработке)."""
 
 from functools import lru_cache
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Значения из dev-окружения (config и docker-compose.dev.yml) — в проде запрещены.
+_DEV_S3_SECRETS = frozenset({"gosdoc", "gosdoc-dev-secret"})
 
 
 class Settings(BaseSettings):
@@ -51,15 +54,38 @@ class Settings(BaseSettings):
     session_ttl_minutes: int = 480
     session_cookie_secure: bool = False
 
-    ldap_url: str = "ldaps://dc.fgau.local"
-    ldap_user_dn_template: str = "{login}@fgau.local"
-    ldap_search_base: str = "DC=fgau,DC=local"
+    # Адреса каталога — только из окружения, например LDAP_URL=ldaps://dc.<домен>.
+    ldap_url: str = ""
+    ldap_user_dn_template: str = ""  # например {login}@<домен>
+    ldap_search_base: str = ""
     ldap_user_filter: str = "(sAMAccountName={login})"
     # Группа AD (DN или CN) → роль приложения, JSON: {"CN=GosDoc-Admins,...": "sys_admin"}.
     ldap_group_roles: dict[str, str] = Field(default_factory=dict)
 
     default_organization_id: int = 1
     deps_check_timeout_s: float = 3.0
+
+    @model_validator(mode="after")
+    def _check_prod(self) -> Self:
+        """В проде не стартуем на dev-паролях и с незаполненным LDAP."""
+        if self.auth_provider == "ldap" and not (
+            self.ldap_url and self.ldap_user_dn_template and self.ldap_search_base
+        ):
+            raise ValueError(
+                "Для AUTH_PROVIDER=ldap нужны LDAP_URL, LDAP_USER_DN_TEMPLATE, LDAP_SEARCH_BASE"
+            )
+        if self.environment != "prod":
+            return self
+        dev_values = {
+            "DATABASE_URL": ":gosdoc@" in self.database_url,
+            "RABBITMQ_URL": ":gosdoc@" in self.rabbitmq_url,
+            "S3_SECRET_KEY": self.storage_backend == "s3" and self.s3_secret_key in _DEV_S3_SECRETS,
+            "SESSION_COOKIE_SECURE": not self.session_cookie_secure,
+        }
+        bad = [name for name, is_dev in dev_values.items() if is_dev]
+        if bad:
+            raise ValueError(f"ENVIRONMENT=prod с dev-значениями: {', '.join(bad)}")
+        return self
 
 
 @lru_cache

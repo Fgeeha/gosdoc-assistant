@@ -9,8 +9,12 @@
   Job миграций Alembic. Адреса и пароли внешних сервисов — в values/Secret.
 - CA-бандл монтируется из Secret/ConfigMap, путь передаётся в `CA_BUNDLE` и
   используется для TLS к PostgreSQL, S3, Inference и LDAP.
-- liveness — `/health/live`, readiness — `/health/ready` (проверяет PostgreSQL,
-  Redis, RabbitMQ, хранилище, Elasticsearch, векторное хранилище, LLM).
+- liveness — `/health/live`, readiness — `/health/ready`. Readiness опрашивает
+  PostgreSQL, Redis, RabbitMQ, хранилище, Elasticsearch, векторное хранилище и
+  LLM (с таймаутом `DEPS_CHECK_TIMEOUT_S`), но 503 отдаёт только при отказе
+  PostgreSQL или Redis: без них не работают вход и сессии. Отказ остальных —
+  деградация: под остаётся в балансировке, затронутый модуль возвращает
+  понятную ошибку, состояние видно в ответе readiness и в мониторинге.
   initContainer выполняет `gosdoc wait-deps` и не даёт поду стартовать, пока
   зависимости недоступны.
 - DAG лежат в `airflow/dags` и выкладываются в заказанный Airflow; в чарт не

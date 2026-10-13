@@ -18,12 +18,14 @@ variables:
   BASE_IMAGE: registry.astralinux.ru/astra/ubi18
   IMAGE_TAG: $CI_COMMIT_SHORT_SHA
   UV_INDEX_URL: $PIP_INDEX_URL
+  # Пакеты ставит make install-ci из зеркала; uv run не должен досинхронизировать.
+  UV_NO_SYNC: "1"
 
 lint:
   stage: lint
   image: $CI_TOOLS_IMAGE
   scripts:
-    - uv sync --frozen
+    - make install-ci
     - cd frontend && npm ci --registry "$NPM_REGISTRY" --no-audit --no-fund && cd ..
     - make lint
 
@@ -34,8 +36,11 @@ test:
     # Образы для testcontainers — из реестра в контуре.
     TC_POSTGRES_IMAGE: $REGISTRY/mirror/postgres:16-alpine
     TC_SEAWEEDFS_IMAGE: $REGISTRY/mirror/seaweedfs:4.46
+    # Ryuk (сборщик контейнеров testcontainers) тянется с Docker Hub — отключаем;
+    # контейнеры и так останавливаются фикстурами, агент CI одноразовый.
+    TESTCONTAINERS_RYUK_DISABLED: "true"
   scripts:
-    - uv sync --frozen
+    - make install-ci
     - uv run pytest --junitxml=report.xml
   artifacts:
     paths:

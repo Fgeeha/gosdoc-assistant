@@ -5,7 +5,7 @@ import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from gosdoc.core.audit import audit
@@ -32,12 +32,15 @@ def save_file(
     data: bytes,
     contains_pdn: bool = True,
 ) -> StoredFile:
-    """Пишет байты в хранилище и метаданные в `files`. Файлы с ПДн получают срок хранения."""
+    """Пишет метаданные в `files` и байты в хранилище. Файлы с ПДн получают срок хранения.
+
+    Если транзакция `db` затем откатится, содержимое удаляется из хранилища:
+    иначе остался бы файл с ПДн без записи, который не найдёт автоудаление.
+    """
     if len(data) > s.storage_max_file_mb * 1024 * 1024:
         raise FileTooLarge(f"Файл больше {s.storage_max_file_mb} МБ")
     key = f"{organization_id}/{uuid.uuid4().hex}"
     expires = datetime.now(UTC) + timedelta(days=s.file_retention_days) if contains_pdn else None
-    storage.put(key, data)
     f = StoredFile(
         organization_id=organization_id,
         owner_id=owner_id,
@@ -51,7 +54,28 @@ def save_file(
     )
     db.add(f)
     db.flush()
+    storage.put(key, data)
+    _delete_on_rollback(db, storage, key)
     return f
+
+
+def _delete_on_rollback(db: Session, storage: FileStorage, key: str) -> None:
+    committed = False
+
+    def on_commit(_: Session) -> None:
+        nonlocal committed
+        committed = True
+
+    def on_rollback(_: Session) -> None:
+        if committed:
+            return
+        try:
+            storage.delete(key)
+        except Exception:  # сбой хранилища не должен маскировать исходную ошибку
+            log.exception("Не удалось удалить файл после отката транзакции: %s", key)
+
+    event.listen(db, "after_commit", on_commit, once=True)
+    event.listen(db, "after_rollback", on_rollback, once=True)
 
 
 def cleanup_expired_files(

@@ -8,6 +8,10 @@ from pathlib import Path
 import fakeredis
 import pytest
 from fastapi.testclient import TestClient
+from gosdoc.core.db import User
+from sqlalchemy.orm import Session, sessionmaker
+
+MakeUser = Callable[..., User]
 
 ROOT = Path(__file__).resolve().parent.parent
 PASSWORD = "Correct-horse-42"
@@ -44,19 +48,24 @@ def pg_url() -> Iterator[str]:
 
 
 @pytest.fixture
-def sessions(pg_url: str):  # type: ignore[no-untyped-def]
+def sessions(pg_url: str) -> sessionmaker[Session]:
     from gosdoc.core.db import get_sessionmaker
 
     return get_sessionmaker()
 
 
 @pytest.fixture
-def make_user(sessions) -> Callable[..., object]:  # type: ignore[no-untyped-def]
+def make_user(sessions: sessionmaker[Session]) -> MakeUser:
     """Создаёт пользователя с уникальным логином (пользователей не удаляем: на них ссылается аудит)."""
     from gosdoc.core.auth import hash_password
-    from gosdoc.core.db import Organization, User
+    from gosdoc.core.db import Organization
 
-    def make(roles: list[str] | None = None, org_id: int = 1, must_change: bool = False) -> User:
+    def make(
+        roles: list[str] | None = None,
+        org_id: int = 1,
+        must_change: bool = False,
+        department: str | None = None,
+    ) -> User:
         with sessions.begin() as db:
             if db.get(Organization, org_id) is None:
                 db.add(Organization(id=org_id, name=f"Орг {org_id}", short_name=f"О{org_id}"))
@@ -64,6 +73,7 @@ def make_user(sessions) -> Callable[..., object]:  # type: ignore[no-untyped-def
             u = User(
                 login=f"u{uuid.uuid4().hex[:10]}",
                 full_name="Иванов Иван Иванович",
+                department=department,
                 organization_id=org_id,
                 roles=roles or ["user"],
                 password_hash=hash_password(PASSWORD),

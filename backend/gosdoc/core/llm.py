@@ -41,7 +41,6 @@ class LLMClient:
         data = sorted(r.json()["data"], key=lambda d: d["index"])
         return [d["embedding"] for d in data]
 
-    def ping(self) -> None:
-        self.chat_http.get("models").raise_for_status()
-        if self.s.embeddings_base_url:
-            self.emb_http.get("models").raise_for_status()
+    def close(self) -> None:
+        self.chat_http.close()
+        self.emb_http.close()

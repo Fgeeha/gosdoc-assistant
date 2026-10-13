@@ -5,12 +5,17 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from gosdoc.api.deps import COOKIE, client_ip, current_user_allow_password_change
+from gosdoc.api.deps import (
+    COOKIE,
+    audit_request,
+    check_new_password,
+    client_ip,
+    current_user_allow_password_change,
+)
 from gosdoc.core.audit import audit
 from gosdoc.core.auth import (
     AuthError,
     SessionStore,
-    check_password_policy,
     get_auth_provider,
     get_session_store,
     hash_password,
@@ -84,13 +89,7 @@ def login(
         secure=s.session_cookie_secure,
         max_age=s.session_ttl_minutes * 60,
     )
-    audit(
-        db,
-        organization_id=user.organization_id,
-        user_id=user.id,
-        action="auth.login",
-        ip=client_ip(request),
-    )
+    audit_request(db, request, user, "auth.login")
     return me_out(user)
 
 
@@ -104,13 +103,7 @@ def logout(
 ) -> None:
     sessions.delete(request.cookies[COOKIE])
     response.delete_cookie(COOKIE)
-    audit(
-        db,
-        organization_id=user.organization_id,
-        user_id=user.id,
-        action="auth.logout",
-        ip=client_ip(request),
-    )
+    audit_request(db, request, user, "auth.logout")
 
 
 @router.get("/me", response_model=Me)
@@ -133,18 +126,9 @@ def change_password(
         raise HTTPException(400, "Текущий пароль указан неверно")
     if body.new_password == body.old_password:
         raise HTTPException(400, "Новый пароль должен отличаться от текущего")
-    try:
-        check_password_policy(body.new_password, get_settings())
-    except AuthError as e:
-        raise HTTPException(400, str(e)) from e
+    check_new_password(body.new_password)
     user.password_hash = hash_password(body.new_password)
     user.must_change_password = False
-    sessions.delete(request.cookies[COOKIE])
+    sessions.revoke_user(user.id)  # все сессии, включая возможно украденные
     response.delete_cookie(COOKIE)
-    audit(
-        db,
-        organization_id=user.organization_id,
-        user_id=user.id,
-        action="auth.password_changed",
-        ip=client_ip(request),
-    )
+    audit_request(db, request, user, "auth.password_changed")

@@ -15,3 +15,4 @@ frontend/dist/
 *.key
 .claude/
 .claude-flow/
+requirements-ci.txt

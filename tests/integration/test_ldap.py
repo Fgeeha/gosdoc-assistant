@@ -4,6 +4,8 @@ import pytest
 from gosdoc.core.auth import AuthError, LdapAuthProvider
 from gosdoc.core.config import Settings
 from ldap3 import MOCK_SYNC, Connection, Server
+from ldap3.core.exceptions import LDAPSocketOpenError
+from sqlalchemy.orm import Session, sessionmaker
 
 pytestmark = pytest.mark.integration
 
@@ -40,19 +42,25 @@ def _factory(user_dn: str, password: str) -> Connection:
     return conn
 
 
-@pytest.fixture
-def provider() -> LdapAuthProvider:
-    s = Settings(
+def _settings() -> Settings:
+    return Settings(
         auth_provider="ldap",
+        ldap_url="ldaps://mock",
         ldap_user_dn_template=f"cn={{login}},{BASE}",
         ldap_search_base=BASE,
         ldap_user_filter="(sAMAccountName={login})",
         ldap_group_roles={"GosDoc-Users": "user", "GosDoc-NPA": "npa_admin"},
     )
-    return LdapAuthProvider(s, connection_factory=_factory)
 
 
-def test_ldap_login_maps_groups_to_roles(provider, sessions) -> None:
+@pytest.fixture
+def provider() -> LdapAuthProvider:
+    return LdapAuthProvider(_settings(), connection_factory=_factory)
+
+
+def test_ldap_login_maps_groups_to_roles(
+    provider: LdapAuthProvider, sessions: sessionmaker[Session]
+) -> None:
     with sessions.begin() as db:
         user = provider.authenticate(db, "sidorov", "Ldap-password-1")
         assert user.roles == ["npa_admin", "user"]
@@ -60,7 +68,9 @@ def test_ldap_login_maps_groups_to_roles(provider, sessions) -> None:
         assert user.department == "Юридический отдел"
 
 
-def test_ldap_rejects_wrong_password_and_foreign_groups(provider, sessions) -> None:
+def test_ldap_rejects_wrong_password_and_foreign_groups(
+    provider: LdapAuthProvider, sessions: sessionmaker[Session]
+) -> None:
     with sessions.begin() as db:
         with pytest.raises(AuthError, match="Неверный"):
             provider.authenticate(db, "sidorov", "wrong")
@@ -68,3 +78,19 @@ def test_ldap_rejects_wrong_password_and_foreign_groups(provider, sessions) -> N
             provider.authenticate(db, "sidorov", "")
         with pytest.raises(AuthError, match="Нет доступа"):
             provider.authenticate(db, "guest", "Ldap-password-1")
+
+
+def test_ldap_unavailable_is_auth_error(sessions: sessionmaker[Session]) -> None:
+    def down(user_dn: str, password: str) -> Connection:
+        raise LDAPSocketOpenError("connection refused")
+
+    provider = LdapAuthProvider(_settings(), connection_factory=down)
+    with pytest.raises(AuthError, match="недоступна"), sessions.begin() as db:
+        provider.authenticate(db, "sidorov", "Ldap-password-1")
+
+
+def test_ldap_server_validates_certificate() -> None:
+    import ssl
+
+    conn = LdapAuthProvider(_settings())._default_connection("cn=x", "p")
+    assert conn.server.tls.validate == ssl.CERT_REQUIRED
