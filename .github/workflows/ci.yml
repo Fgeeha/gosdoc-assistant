@@ -1,0 +1,59 @@
+# Проверка в GitHub: линтеры, тесты, Helm-чарт, сборка образов.
+# Образы собираются на dev-базе python:3.11-slim (ADR-0007) только для проверки
+# сборки и никуда не публикуются; прод-образы на Astra Linux / РЕД ОС
+# собирает конвейер в контуре (.gitflic-ci.yml).
+name: CI
+
+on:
+  push:
+    branches: [Master, develop, "feature/**", "bugfix/**", "release/**", "hotfix/**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: make install
+      - run: make lint
+
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      # LibreOffice — для теста сборки PDF письма.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libreoffice-writer-nogui
+      - run: uv sync --frozen
+      - run: uv run pytest --junitxml=report.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pytest-report
+          path: report.xml
+
+  helm:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: make helm-lint
+
+  build:
+    needs: [lint, test]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: make images BASE_IMAGE=python:3.11-slim IMAGE_TAG=${{ github.sha }}
