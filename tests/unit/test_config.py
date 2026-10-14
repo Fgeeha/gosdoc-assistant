@@ -4,7 +4,7 @@ from pydantic import ValidationError
 
 
 def test_prod_refuses_dev_defaults() -> None:
-    with pytest.raises(ValidationError, match="DATABASE_URL.*S3_SECRET_KEY"):
+    with pytest.raises(ValidationError, match=r"DATABASE_URL.*S3_SECRET_KEY"):
         Settings(
             environment="prod",
             database_url="postgresql+psycopg://gosdoc:gosdoc@db:5432/gosdoc",

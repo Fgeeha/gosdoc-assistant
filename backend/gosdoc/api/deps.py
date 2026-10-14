@@ -40,7 +40,7 @@ def check_new_password(password: str) -> None:
 
 def current_user_allow_password_change(
     request: Request,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db, scope="function"),
     sessions: SessionStore = Depends(get_session_store),
 ) -> User:
     """Пользователь сессии; допускает тех, кто ещё должен сменить пароль."""

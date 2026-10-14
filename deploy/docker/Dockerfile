@@ -27,6 +27,7 @@ RUN /opt/uv/bin/uv export --frozen --no-dev --no-emit-project -o /tmp/requiremen
        -r /tmp/requirements.txt
 COPY backend backend
 COPY workers workers
+COPY rag rag
 COPY alembic.ini README.md ./
 RUN /opt/uv/bin/uv pip install --python /app/.venv/bin/python --no-deps -e .
 

@@ -64,7 +64,7 @@ def login(
     body: LoginIn,
     request: Request,
     response: Response,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db, scope="function"),
     sessions: SessionStore = Depends(get_session_store),
 ) -> Me | JSONResponse:
     s = get_settings()
@@ -97,7 +97,7 @@ def login(
 def logout(
     request: Request,
     response: Response,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db, scope="function"),
     sessions: SessionStore = Depends(get_session_store),
     user: User = Depends(current_user_allow_password_change),
 ) -> None:
@@ -116,7 +116,7 @@ def change_password(
     body: PasswordIn,
     request: Request,
     response: Response,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db, scope="function"),
     sessions: SessionStore = Depends(get_session_store),
     user: User = Depends(current_user_allow_password_change),
 ) -> None:

@@ -95,6 +95,25 @@ class AuditLog(Base):
     details: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
 
+class Job(Base):
+    """Фоновая задача любого модуля: kind — table / letter / docs_check / npa_index."""
+
+    __tablename__ = "jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(30))
+    status: Mapped[str] = mapped_column(String(20), default="queued")  # queued/running/done/failed
+    input_file_id: Mapped[int | None] = mapped_column(ForeignKey("files.id", ondelete="SET NULL"))
+    params: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    result: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 @lru_cache
 def get_engine() -> Engine:
     return create_engine(get_settings().database_url, pool_pre_ping=True)
@@ -106,6 +125,11 @@ def get_sessionmaker() -> sessionmaker[Session]:
 
 
 def get_db() -> Iterator[Session]:
-    """Зависимость FastAPI: сессия на запрос, коммит при успехе, откат при ошибке."""
+    """Зависимость FastAPI: сессия на запрос, коммит при успехе, откат при ошибке.
+
+    Подключается как Depends(get_db, scope="function"): тогда коммит происходит
+    до отправки ответа. Со scope по умолчанию FastAPI завершает зависимость
+    после ответа, и следующий запрос клиента может не увидеть изменений.
+    """
     with get_sessionmaker()() as session, session.begin():
         yield session

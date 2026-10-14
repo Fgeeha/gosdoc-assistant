@@ -6,6 +6,12 @@ import AuditPage from "./pages/AuditPage";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
 import HomePage from "./pages/HomePage";
 import LoginPage from "./pages/LoginPage";
+import ChecksPage from "./pages/docs/ChecksPage";
+import NpaPage from "./pages/docs/NpaPage";
+import LetterEditor from "./pages/letters/LetterEditor";
+import LettersPage from "./pages/letters/LettersPage";
+import OrganizationPage from "./pages/OrganizationPage";
+import TablesPage from "./pages/tables/TablesPage";
 import UsersPage from "./pages/UsersPage";
 
 export default function App() {
@@ -26,9 +32,14 @@ export default function App() {
   const isAdmin = me.roles.includes("sys_admin");
   const items = [
     { key: "/", label: <Link to="/">Главная</Link> },
+    { key: "/check", label: <Link to="/check">Проверка</Link> },
+    { key: "/letters", label: <Link to="/letters">Письма</Link> },
+    { key: "/tables", label: <Link to="/tables">Таблицы</Link> },
+    { key: "/npa", label: <Link to="/npa">Нормативная база</Link> },
     ...(isAdmin
       ? [
           { key: "/admin/users", label: <Link to="/admin/users">Пользователи</Link> },
+          { key: "/admin/organization", label: <Link to="/admin/organization">Организация</Link> },
           { key: "/admin/audit", label: <Link to="/admin/audit">Журнал действий</Link> },
         ]
       : []),
@@ -46,16 +57,22 @@ export default function App() {
         <Typography.Text strong style={{ color: "#fff", fontSize: 18, whiteSpace: "nowrap" }}>
           ГосДок Ассистент
         </Typography.Text>
-        <Menu theme="dark" mode="horizontal" selectedKeys={[location.pathname]} items={items} style={{ flex: 1 }} />
+        <Menu theme="dark" mode="horizontal" selectedKeys={[location.pathname.replace(/^\/letters\/.*/, "/letters")]} items={items} style={{ flex: 1 }} />
         <Typography.Text style={{ color: "#fff" }}>{me.full_name}</Typography.Text>
         <Button onClick={logout}>Выйти</Button>
       </Layout.Header>
       <Layout.Content style={{ padding: 24, maxWidth: 1200, width: "100%", margin: "0 auto" }}>
         <Routes>
           <Route path="/" element={<HomePage />} />
+          <Route path="/tables" element={<TablesPage />} />
+          <Route path="/check" element={<ChecksPage />} />
+          <Route path="/npa" element={<NpaPage me={me} />} />
+          <Route path="/letters" element={<LettersPage />} />
+          <Route path="/letters/:id" element={<LetterEditor me={me} />} />
           <Route path="/password" element={<ChangePasswordPage onDone={() => setMe(null)} />} />
           {isAdmin && <Route path="/admin/users" element={<UsersPage me={me} />} />}
           {isAdmin && <Route path="/admin/audit" element={<AuditPage />} />}
+          {isAdmin && <Route path="/admin/organization" element={<OrganizationPage />} />}
           <Route path="/404" element={<Result status="404" title="Страница не найдена" />} />
           <Route path="*" element={<Navigate to="/404" replace />} />
         </Routes>
