@@ -321,19 +321,31 @@ DAG также чистит индексы от удалённых актов и
   (стадия сборки фронтенда) и nginx ставятся пакетами ОС. Один Dockerfile,
   targets: `api`, `worker` (+ LibreOffice, Tesseract), `frontend` (nginx +
   статика). `python:3.11-slim` — только в `docker-compose.dev.yml`.
-- **Helm (ADR-0009, этап 6):** чарт разворачивает только приложение: api,
-  воркеры, frontend/nginx, Job миграций Alembic. Внешние сервисы — адреса и
-  секреты в values/Secret, CA-бандл монтируется из Secret/ConfigMap.
-  readiness/liveness, initContainer ждёт доступности зависимостей
-  (`gosdoc wait-deps`). DAG выкладываются в заказанный Airflow отдельно.
-  SeaweedFS в чарт не входит.
+- **Helm (ADR-0009) — `deploy/helm/gosdoc`:** только приложение: api,
+  воркеры (группы очередей — отдельные Deployment), frontend/nginx, Job
+  миграций Alembic. Адреса сервисов — `config` (ConfigMap), пароли —
+  `existingSecret`. CA-бандл монтируется из Secret/ConfigMap, путь — в
+  `CA_BUNDLE`. Job миграций — обычный ресурс с номером ревизии в имени (не
+  hook: ConfigMap и Secret к его запуску уже созданы); api и воркеры в
+  initContainer ждут нужных зависимостей (`gosdoc wait-deps --only …`) и
+  миграций (`gosdoc wait-migrations`). readiness `/health/ready`, liveness
+  `/health/live`. Поды — не от root, read-only корень, `/tmp` — emptyDir.
+  NetworkPolicy: к api — только из frontend. SeaweedFS в чарт не входит.
+  Пример значений — `values-example.yaml`, проверка — `make helm-lint`.
+- **Airflow — `airflow/dags`:** тонкие DAG вызывают служебный API приложения
+  (`/api/internal/*`, токен `SERVICE_TOKEN`), только стандартная библиотека:
+  `gosdoc_npa_update` (ежедневная доиндексация, по воскресеньям — полная),
+  `gosdoc_maintenance` (удаление файлов с истёкшим сроком), `gosdoc_quality`
+  (промпты → MLFlow, обезличенная статистика замечаний → Evidently). Каждый
+  запуск фиксируется в журнале аудита.
 - **`.gitflic-ci.yml`:** `lint` (ruff, mypy, tsc) → `test` (pytest unit +
   интеграционные на testcontainers) → `build` (образы) → `scan` (сканер образов
-  + Сканер безопасности ML) → `deploy` (helm upgrade, ручной запуск; этап 6).
-- **Наблюдаемость:** логи JSON в stdout → Loki; Evidently — качество ответов
-  (доля замечаний, отброшенных из-за отсутствия источника; доля замечаний,
-  отклонённых пользователем; длины ответов; дрейф эмбеддингов запросов);
-  MLFlow — промпты, версии моделей, офлайн-оценки на эталонном наборе.
+  + Сканер безопасности ML) → `deploy` (`helm upgrade --install`, ручной запуск).
+- **Наблюдаемость (`deploy/monitoring`):** логи JSON в stdout → Loki
+  (конфигурация агента — `promtail-pipeline.yaml`); Evidently — качество
+  ответов (доля подтверждённых сотрудниками замечаний, доля ответов модели,
+  отброшенных из-за отсутствия подтверждённой цитаты); MLFlow — версии
+  промптов и моделей.
 
 ## 9. Локальная разработка
 

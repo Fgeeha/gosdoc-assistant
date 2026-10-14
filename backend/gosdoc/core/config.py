@@ -64,6 +64,11 @@ class Settings(BaseSettings):
 
     default_organization_id: int = 1
     deps_check_timeout_s: float = 3.0
+    # Токен регламентных задач (Airflow → /api/internal/*); пусто — эндпоинты отключены.
+    service_token: str = ""
+    # MLFlow: учёт версий промптов и моделей (пусто — не используется).
+    mlflow_url: str = ""
+    mlflow_token: str = ""
 
     @model_validator(mode="after")
     def _check_prod(self) -> Self:
@@ -81,6 +86,7 @@ class Settings(BaseSettings):
             "RABBITMQ_URL": ":gosdoc@" in self.rabbitmq_url,
             "S3_SECRET_KEY": self.storage_backend == "s3" and self.s3_secret_key in _DEV_S3_SECRETS,
             "SESSION_COOKIE_SECURE": not self.session_cookie_secure,
+            "SERVICE_TOKEN": bool(self.service_token) and len(self.service_token) < 32,
         }
         bad = [name for name, is_dev in dev_values.items() if is_dev]
         if bad:

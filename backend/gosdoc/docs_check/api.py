@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
-from sqlalchemy import event, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from gosdoc.api.deps import audit_request, current_user, require_roles
@@ -16,7 +16,7 @@ from gosdoc.api.files import readable_file
 from gosdoc.core.config import get_settings
 from gosdoc.core.db import Job, User, get_db
 from gosdoc.core.files import FileTooLarge, save_file
-from gosdoc.core.queue import Enqueue, get_enqueue
+from gosdoc.core.queue import Enqueue, enqueue_after_commit, get_enqueue
 from gosdoc.core.repository import OrgRepository
 from gosdoc.core.storage import FileStorage, get_storage
 from gosdoc.core.text import FORMATS, TextExtractionError, extract_paragraphs
@@ -156,18 +156,6 @@ def kinds(_: User = Depends(current_user)) -> dict[str, str]:
     return KINDS
 
 
-def _enqueue_after_commit(
-    db: Session, enqueue: Enqueue, queue: str, actor: str, ids: list[int]
-) -> None:
-    """Воркер должен увидеть записи в БД, поэтому в очередь — после коммита запроса."""
-
-    def send(_: Session) -> None:
-        for i in ids:
-            enqueue(queue, actor, i)
-
-    event.listen(db, "after_commit", send, once=True)
-
-
 def _unpack(name: str, data: bytes) -> list[tuple[str, bytes]]:
     if PurePath(name).suffix.lower() != ".zip":
         return [(name, data)]
@@ -252,7 +240,7 @@ def upload_npa(
     audit_request(
         db, request, user, "npa.uploaded", details={"files": len(out), "queued": len(queued)}
     )
-    _enqueue_after_commit(db, enqueue, "npa", "index_npa_edition", queued)
+    enqueue_after_commit(db, enqueue, "npa", "index_npa_edition", queued)
     return out
 
 
@@ -295,7 +283,7 @@ def reindex_act(
         e.status = "queued"
     log_change(db, act, "reindexed", user.id)
     audit_request(db, request, user, "npa.reindex", object_type="npa_act", object_id=act.id)
-    _enqueue_after_commit(db, enqueue, "npa", "index_npa_edition", ids)
+    enqueue_after_commit(db, enqueue, "npa", "index_npa_edition", ids)
     return {"editions": len(ids)}
 
 
@@ -352,7 +340,7 @@ def create_checks(
     for job in jobs:
         audit_request(db, request, user, "docs_check.created", object_type="job", object_id=job.id)
     ids = [j.id for j in jobs]
-    _enqueue_after_commit(db, enqueue, "docs_check", "process_docs_check", ids)
+    enqueue_after_commit(db, enqueue, "docs_check", "process_docs_check", ids)
     return [{"id": j.id, "status": j.status, "input_file_id": j.input_file_id} for j in jobs]
 
 

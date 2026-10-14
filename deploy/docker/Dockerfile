@@ -49,6 +49,8 @@ RUN os-packages.sh worker && useradd --system --uid 10001 --home-dir /app gosdoc
 WORKDIR /app
 COPY --from=builder --chown=10001 /app /app
 USER 10001
+# LibreOffice пишет профиль в HOME: в Kubernetes корень read-only, /tmp — emptyDir.
+ENV HOME=/tmp
 CMD ["dramatiq", "workers.actors", "--processes", "2", "--threads", "4"]
 
 # --- Фронтенд: сборка Node.js из пакетов ОС, раздача nginx из пакетов ОС ---
@@ -64,8 +66,11 @@ RUN npm run build
 
 FROM ${BASE_IMAGE} AS frontend
 COPY --chmod=755 deploy/docker/os-packages.sh /usr/local/bin/os-packages.sh
-RUN os-packages.sh nginx && rm -f /etc/nginx/sites-enabled/default /etc/nginx/conf.d/default.conf
+RUN os-packages.sh nginx && rm -f /etc/nginx/sites-enabled/default /etc/nginx/conf.d/default.conf \
+    && useradd --system --uid 10001 --home-dir /usr/share/gosdoc gosdoc
 COPY deploy/docker/nginx.conf /etc/nginx/nginx.conf
 COPY --from=frontend-build /src/dist /usr/share/gosdoc
+USER 10001
 EXPOSE 8080
-CMD ["nginx", "-g", "daemon off;"]
+# -e: журнал ошибок в stderr с самого старта (до чтения конфигурации).
+CMD ["nginx", "-e", "stderr", "-g", "daemon off;"]

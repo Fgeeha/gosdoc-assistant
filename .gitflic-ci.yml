@@ -6,6 +6,7 @@
 #   BASE_IMAGE                                  — базовый образ (по умолчанию Astra Linux)
 #   CI_TOOLS_IMAGE                              — образ с uv, Node.js и Docker CLI
 #   IMAGE_SCANNER_CMD, ML_SCANNER_CMD           — команды сканера образов и Сканера безопасности ML
+#   KUBECONFIG_FILE, HELM_VALUES_FILE, K8S_NAMESPACE — выкатка (этап deploy)
 
 stages:
   - lint
@@ -62,10 +63,18 @@ scan:
     # Сканер безопасности ML: зависимости и код ML-пайплайнов (RAG, промпты).
     - $ML_SCANNER_CMD --path rag --path backend --requirements uv.lock
 
-# Выкатка Helm-чартом появится на этапе 6 (deploy/helm).
+# Выкатка Helm-чартом (только приложение, ADR-0009). Значения окружения —
+# файл-переменная проекта HELM_VALUES_FILE; kubeconfig — KUBECONFIG_FILE.
+# Секреты (DATABASE_URL и т. п.) — в Secret кластера (existingSecret), не в CI.
 deploy:
   stage: deploy
   image: $CI_TOOLS_IMAGE
   when: manual
   scripts:
-    - echo "Helm-чарт будет добавлен на этапе 6"
+    - export KUBECONFIG="$KUBECONFIG_FILE"
+    - helm lint deploy/helm/gosdoc -f "$HELM_VALUES_FILE"
+    - >-
+      helm upgrade --install gosdoc deploy/helm/gosdoc
+      --namespace "$K8S_NAMESPACE" -f "$HELM_VALUES_FILE"
+      --set image.registry="$REGISTRY/gosdoc" --set image.tag="$IMAGE_TAG"
+      --wait --timeout 15m

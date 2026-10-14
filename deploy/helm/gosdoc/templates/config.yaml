@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "gosdoc.fullname" . }}-config
+  labels: {{- include "gosdoc.labels" . | nindent 4 }}
+data:
+  {{- range $k, $v := .Values.config }}
+  {{- if ne (toString $v) "" }}
+  {{ $k }}: {{ $v | toString | quote }}
+  {{- end }}
+  {{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "gosdoc.fullname" . }}-nginx
+  labels: {{- include "gosdoc.labels" . | nindent 4 }}
+data:
+  # Копия deploy/docker/nginx.conf (сверяется тестом), адрес API — сервис релиза.
+  nginx.conf: |
+    {{- .Files.Get "files/nginx.conf" | replace "http://api:8000" (printf "http://%s-api:8000" (include "gosdoc.fullname" .)) | nindent 4 }}
+{{- if not .Values.existingSecret }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "gosdoc.secretName" . }}
+  labels: {{- include "gosdoc.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  {{- required "Задайте existingSecret или secret.DATABASE_URL" .Values.secret.DATABASE_URL | quote | printf "DATABASE_URL: %s" | nindent 2 }}
+  {{- range $k, $v := omit .Values.secret "DATABASE_URL" }}
+  {{ $k }}: {{ $v | toString | quote }}
+  {{- end }}
+{{- end }}

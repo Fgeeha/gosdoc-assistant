@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import event, func, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from gosdoc.api.deps import audit_request, current_user, require_roles
@@ -13,7 +13,7 @@ from gosdoc.api.files import can_view, readable_file
 from gosdoc.core.config import get_settings
 from gosdoc.core.db import Job, User, get_db
 from gosdoc.core.llm import LLMClient
-from gosdoc.core.queue import Enqueue, get_enqueue
+from gosdoc.core.queue import Enqueue, enqueue_after_commit, get_enqueue
 from gosdoc.core.repository import OrgRepository
 from gosdoc.core.storage import FileStorage, get_storage
 from gosdoc.core.text import TextExtractionError, extract_text
@@ -323,11 +323,8 @@ def make_pdf(
     audit_request(
         db, request, user, "letters.pdf_requested", object_type="letter", object_id=letter.id
     )
-    job_id = job.id
-    event.listen(
-        db, "after_commit", lambda _: enqueue("letters", "process_letter_pdf", job_id), once=True
-    )
-    return {"job_id": job_id, "version": version.version}
+    enqueue_after_commit(db, enqueue, "letters", "process_letter_pdf", [job.id])
+    return {"job_id": job.id, "version": version.version}
 
 
 @router.get("/jobs/{job_id}")

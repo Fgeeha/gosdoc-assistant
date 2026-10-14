@@ -17,7 +17,7 @@
 | 3 | Модуль «Перенос данных между таблицами»: XLSX/XLS/CSV/ODS, предложение маппинга, преобразования, проверки ИНН/СНИЛС/ОГРН, отчёт об ошибках, шаблоны маппинга, пакетная обработка | готово (MVP) |
 | 4 | Модуль «Подготовка писем»: ответ на обращение гражданина, запрос, сопроводительное; DOCX по ГОСТ Р 7.0.97-2016, PDF, версии, сроки 59-ФЗ, проверка стиля | готово (MVP) |
 | 5 | Модуль «Проверка документов»: нормативная база с редакциями, проверка ссылок на НПА, RAG-проверка содержания с проверкой цитат, DOCX с примечаниями, OCR сканов | готово (MVP) |
-| 6 | Helm, DAG Airflow, мониторинг | — |
+| 6 | Helm-чарт приложения, DAG Airflow, мониторинг (Loki, Evidently, MLFlow) | готово |
 | 7 | Документация администратора и пользователя | — |
 
 ## Быстрый старт
@@ -138,3 +138,17 @@ tests/            unit, integration, fixtures
 утративший силу 24-ФЗ) и проверяемый документ `checked-document.docx`.
 Это **сокращённые выдержки** для тестов: номера статей настоящие,
 формулировки упрощены. Для работы загружайте официальные тексты.
+
+## Развёртывание в Kubernetes
+
+1. Соберите и опубликуйте образы: `make images BASE_IMAGE=... IMAGE_PREFIX=<реестр>/gosdoc/gosdoc`
+   (в CI — этап `build`).
+2. Создайте Secret с ключами `DATABASE_URL`, `RABBITMQ_URL`, `S3_ACCESS_KEY`,
+   `S3_SECRET_KEY`, `LLM_API_KEY`, `SERVICE_TOKEN` (32+ символов),
+   `GOSDOC_ADMIN_PASSWORD` и ConfigMap с корневым CA.
+3. `helm upgrade --install gosdoc deploy/helm/gosdoc -f values.yaml`
+   (пример — `deploy/helm/gosdoc/values-example.yaml`).
+4. Выложите `airflow/dags/*.py` в заказанный Airflow, задайте Variables
+   `gosdoc_api_url`, `gosdoc_service_token`, `gosdoc_ca_bundle`
+   (и `gosdoc_evidently_url`, `gosdoc_evidently_project`).
+5. Логи — см. `deploy/monitoring/README.md`.
