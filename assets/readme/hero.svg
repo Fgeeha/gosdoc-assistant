@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="title desc">
+  <title id="title">ГосДок Ассистент</title>
+  <desc id="desc">Слева — название и назначение системы. Справа — фрагмент проверяемого документа из тестовых данных с примечаниями на полях: ссылка на устаревшую редакцию 59-ФЗ и на утративший силу 24-ФЗ.</desc>
+
+  <rect width="1200" height="420" rx="24" fill="#13203A"/>
+
+  <g id="title-block" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <text x="64" y="92" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" letter-spacing="2" fill="#E3A72F">ЗАКРЫТЫЙ КОНТУР · 152-ФЗ · v0.1.0</text>
+    <text x="60" y="176" font-family="Georgia, 'Times New Roman', serif" font-size="74" font-weight="700" fill="#F5EFE3">ГосДок</text>
+    <text x="60" y="252" font-family="Georgia, 'Times New Roman', serif" font-size="74" font-weight="700" fill="#F5EFE3">Ассистент</text>
+    <text x="64" y="304" font-size="22" fill="#C9CFDA">Проверка документов по НПА с цитатами,</text>
+    <text x="64" y="334" font-size="22" fill="#C9CFDA">письма по ГОСТ Р 7.0.97-2016,</text>
+    <text x="64" y="364" font-size="22" fill="#C9CFDA">перенос таблиц без потери строк.</text>
+  </g>
+
+  <g id="document">
+    <rect x="560" y="40" width="384" height="340" rx="6" fill="#FAF6EC"/>
+    <!-- поля по ГОСТ: левое 20 мм, правое 10 мм -->
+    <line x1="604" y1="52" x2="604" y2="368" stroke="#9AA3B5" stroke-width="1" stroke-dasharray="4 5"/>
+    <line x1="922" y1="52" x2="922" y2="368" stroke="#9AA3B5" stroke-width="1" stroke-dasharray="4 5"/>
+
+    <g font-family="Georgia, 'Times New Roman', serif" font-size="16" fill="#1F2937">
+      <text x="616" y="80" font-weight="700" letter-spacing="1">ПОРЯДОК</text>
+      <text x="616" y="118">1. Порядок разработан в соответствии</text>
+      <text x="616" y="144">с Федеральным законом от 02.05.2006</text>
+      <rect x="682" y="155" width="172" height="24" rx="3" fill="#E3A72F" fill-opacity="0.32"/>
+      <text x="616" y="172">№ 59-ФЗ (в ред. от 02.05.2006)</text>
+      <text x="616" y="198">и Федеральным законом от 20.02.1995</text>
+      <rect x="612" y="207" width="68" height="24" rx="3" fill="#D64532" fill-opacity="0.22"/>
+      <text x="616" y="224">№ 24-ФЗ «Об информации, инфор-</text>
+      <line x1="616" y1="219" x2="676" y2="219" stroke="#D64532" stroke-width="2"/>
+      <text x="616" y="250">матизации и защите информации».</text>
+      <text x="616" y="290">2. В соответствии с частью 1 статьи 12</text>
+      <text x="616" y="316">Федерального закона № 59-ФЗ</text>
+      <text x="616" y="342">обращение рассматривается…</text>
+    </g>
+  </g>
+
+  <g id="margin-comments" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <path d="M854 167 C 900 167, 900 112, 928 112" fill="none" stroke="#E3A72F" stroke-width="2"/>
+    <rect x="928" y="56" width="228" height="124" rx="10" fill="#FFF7E3" stroke="#E3A72F" stroke-width="2"/>
+    <text x="946" y="86" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16" font-weight="700" fill="#9A6A07">ВНИМАНИЕ</text>
+    <text x="946" y="114" font-size="20" font-weight="700" fill="#1F2937">59-ФЗ: старая</text>
+    <text x="946" y="138" font-size="20" font-weight="700" fill="#1F2937">редакция</text>
+    <text x="946" y="164" font-family="Georgia, serif" font-size="18" font-style="italic" fill="#4B5563">«в ред. от 04.08.2023»</text>
+
+    <path d="M680 219 C 760 262, 880 262, 928 252" fill="none" stroke="#D64532" stroke-width="2"/>
+    <rect x="928" y="196" width="228" height="124" rx="10" fill="#FDECEA" stroke="#D64532" stroke-width="2"/>
+    <text x="946" y="226" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16" font-weight="700" fill="#A3271A">КРИТИЧНО</text>
+    <text x="946" y="254" font-size="20" font-weight="700" fill="#1F2937">24-ФЗ утратил силу</text>
+    <text x="946" y="280" font-size="18" fill="#4B5563">замените ссылку</text>
+    <text x="946" y="304" font-size="18" fill="#4B5563">на действующий акт</text>
+
+    <text x="928" y="352" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16" fill="#8C97AD">примечания Word · DOCX</text>
+  </g>
+</svg>
