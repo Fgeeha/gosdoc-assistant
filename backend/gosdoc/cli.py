@@ -24,6 +24,11 @@ from gosdoc.core.storage import S3Storage, get_storage
 
 def _create_user(args: argparse.Namespace) -> int:
     settings = get_settings()
+    # Существование — до проверки пароля: иначе --if-missing падает на старом пароле из .env.
+    with get_sessionmaker()() as db:
+        if db.scalar(select(User.id).where(User.login == args.login)):
+            print(f"Пользователь {args.login} уже есть")
+            return 0 if args.if_missing else 1
     if args.password_env:
         password = os.environ.get(args.password_env, "")
     else:
@@ -35,9 +40,6 @@ def _create_user(args: argparse.Namespace) -> int:
         print(e, file=sys.stderr)
         return 2
     with get_sessionmaker().begin() as db:
-        if db.scalar(select(User.id).where(User.login == args.login)):
-            print(f"Пользователь {args.login} уже есть")
-            return 0 if args.if_missing else 1
         db.add(
             new_local_user(
                 organization_id=settings.default_organization_id,

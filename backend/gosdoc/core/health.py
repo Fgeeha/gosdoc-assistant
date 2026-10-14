@@ -20,6 +20,8 @@ log = logging.getLogger(__name__)
 # Без них API бесполезен (вход, сессии). Остальные — «деградация»: под остаётся
 # в балансировке, а модули, которым зависимость нужна, вернут понятную ошибку.
 CRITICAL = ("postgres", "redis")
+# Признаки ошибок, которые не исчезнут от повторных попыток.
+_PERMANENT = ("password authentication failed", "WRONGPASS", "ACCESS_REFUSED")
 
 
 def _checks(s: Settings) -> dict[str, Callable[[], None]]:
@@ -115,10 +117,15 @@ def wait_for_dependencies(
         if not failed:
             log.info("Все зависимости доступны")
             return True
+        if any(m in v for v in failed.values() for m in _PERMANENT):
+            # Ожиданием не лечится. Частый случай: POSTGRES_PASSWORD в .env сменили после
+            # первого запуска, а Postgres берёт пароль из переменной только при создании тома.
+            log.error("Ошибка аутентификации, ожидание прервано: %s", failed)
+            return False
         if time.monotonic() > deadline:
             log.error("Зависимости недоступны: %s", failed)
             return False
-        log.warning("Ожидание зависимостей: %s", ", ".join(failed))
+        log.warning("Ожидание зависимостей: %s", failed)
         time.sleep(interval_s)
 
 
