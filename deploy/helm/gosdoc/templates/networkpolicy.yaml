@@ -1,0 +1,31 @@
+{{- if .Values.networkPolicy.enabled }}
+# К api — только frontend (nginx). Исходящий трафик не ограничиваем: адреса
+# заказанных сервисов задаются статическими IP и меняются вне чарта.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "gosdoc.fullname" . }}-api
+  labels: {{- include "gosdoc.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "gosdoc.selector" (dict "root" . "component" "api") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {{- include "gosdoc.selector" (dict "root" . "component" "frontend") | nindent 14 }}
+      ports: [{port: 8000}]
+---
+# Воркерам и Job миграций входящие соединения не нужны.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "gosdoc.fullname" . }}-no-ingress
+  labels: {{- include "gosdoc.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - {key: app.kubernetes.io/instance, operator: In, values: [{{ .Release.Name }}]}
+      - {key: app.kubernetes.io/component, operator: NotIn, values: [api, frontend]}
+  policyTypes: [Ingress]
+{{- end }}

@@ -1,0 +1,22 @@
+# Пример значений для установки в ЦИТ (адреса — условные). Пароли — в Secret
+# gosdoc-secret, созданном заранее (kubectl create secret generic ... --from-env-file).
+image:
+  registry: registry.fgau.local/gosdoc
+  tag: "1.0.0"
+existingSecret: gosdoc-secret
+caBundle:
+  configMapName: fgau-root-ca
+  key: ca.pem
+config:
+  REDIS_URL: rediss://redis.fgau.local:6380/0
+  ELASTICSEARCH_URL: https://es.fgau.local:9200
+  VECTOR_STORE_URL: https://milvus.fgau.local:19530
+  S3_ENDPOINT_URL: https://s3.fgau.local:8333
+  LLM_BASE_URL: https://inference.fgau.local/v1
+  LLM_MODEL: qwen2.5-32b-instruct
+  LLM_MAX_CONTEXT: "32768"
+  EMBEDDINGS_MODEL: bge-m3
+  MLFLOW_URL: https://mlflow.fgau.local
+ingress:
+  host: gosdoc.fgau.local
+  tlsSecretName: gosdoc-tls

@@ -1,0 +1,159 @@
+# Локальная разработка: всё поднимается одной командой — make up-local.
+# Сеть "core" внутренняя (internal: true): у сервисов нет выхода во внешнюю сеть.
+# Наружу опубликован только frontend (nginx), API доступно через него по /api.
+name: gosdoc
+
+x-build: &build
+  context: ..
+  dockerfile: deploy/docker/Dockerfile
+  args:
+    # Только для разработки (ADR-0007); прод-образы собираются на Astra Linux / РЕД ОС.
+    BASE_IMAGE: ${DEV_BASE_IMAGE:-python:3.11-slim}
+
+x-app-env: &app-env
+  ENVIRONMENT: dev
+  DATABASE_URL: postgresql+psycopg://gosdoc:${POSTGRES_PASSWORD:?задайте в .env}@postgres:5432/gosdoc
+  REDIS_URL: redis://redis:6379/0
+  RABBITMQ_URL: amqp://gosdoc:${RABBITMQ_PASSWORD:?задайте в .env}@rabbitmq:5672/
+  ELASTICSEARCH_URL: http://elasticsearch:9200
+  VECTOR_STORE: chroma
+  VECTOR_STORE_URL: http://chroma:8000
+  STORAGE_BACKEND: ${STORAGE_BACKEND:-s3}
+  S3_ENDPOINT_URL: http://seaweedfs:8333
+  S3_ACCESS_KEY: ${S3_ACCESS_KEY:-gosdoc}
+  S3_SECRET_KEY: ${S3_SECRET_KEY:-gosdoc-dev-secret}
+  S3_BUCKET: gosdoc
+  LLM_BASE_URL: ${LLM_BASE_URL:-http://mock-llm:8090/v1}
+  LLM_MODEL: ${LLM_MODEL:-mock}
+  LLM_API_KEY: ${LLM_API_KEY:-none}
+  LLM_MAX_CONTEXT: ${LLM_MAX_CONTEXT:-8192}
+  EMBEDDINGS_BASE_URL: ${EMBEDDINGS_BASE_URL:-}
+  EMBEDDINGS_MODEL: ${EMBEDDINGS_MODEL:-mock-embeddings}
+  FILE_RETENTION_DAYS: ${FILE_RETENTION_DAYS:-30}
+
+networks:
+  core:
+    internal: true
+  edge: {}
+
+volumes:
+  pg-data:
+  es-data:
+  chroma-data:
+  seaweed-data:
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: gosdoc
+      POSTGRES_USER: gosdoc
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes: [pg-data:/var/lib/postgresql/data]
+    networks: [core]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gosdoc"]
+      interval: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    networks: [core]
+
+  rabbitmq:
+    image: rabbitmq:3.13-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: gosdoc
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    networks: [core]
+
+  elasticsearch:
+    image: elasticsearch:8.19.6
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+    volumes: [es-data:/usr/share/elasticsearch/data]
+    networks: [core]
+
+  chroma:
+    image: chromadb/chroma:1.5.9
+    volumes: [chroma-data:/data]
+    networks: [core]
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.46
+    command: server -s3 -dir=/data
+    volumes: [seaweed-data:/data]
+    networks: [core]
+
+  mock-llm:
+    image: gosdoc-api:dev
+    pull_policy: never
+    command: uvicorn app:app --app-dir /mock --host 0.0.0.0 --port 8090
+    volumes: [./mock-llm:/mock:ro]
+    networks: [core]
+
+  migrate:
+    image: gosdoc-api:dev
+    pull_policy: never
+    environment:
+      <<: *app-env
+      GOSDOC_ADMIN_PASSWORD: ${GOSDOC_ADMIN_PASSWORD:?задайте в .env}
+    command:
+      - sh
+      - -c
+      - >-
+        gosdoc init-storage --timeout 240 &&
+        gosdoc wait-deps --timeout 240 &&
+        alembic upgrade head &&
+        gosdoc create-user --login admin --full-name Администратор --roles sys_admin,user
+        --password-env GOSDOC_ADMIN_PASSWORD --if-missing
+    depends_on:
+      postgres: { condition: service_healthy }
+      mock-llm: { condition: service_started }
+    networks: [core]
+
+  api:
+    build: { <<: *build, target: api }
+    image: gosdoc-api:dev
+    environment:
+      <<: *app-env
+      # API доступно только из внутренней сети через nginx, ему и доверяем X-Forwarded-For.
+      FORWARDED_ALLOW_IPS: "*"
+    command: uvicorn gosdoc.main:app --host 0.0.0.0 --port 8000 --proxy-headers --reload --reload-dir /app/backend
+    volumes: [../backend:/app/backend:ro]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    networks: [core]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')"]
+      interval: 5s
+      retries: 20
+
+  worker:
+    build: { <<: *build, target: worker }
+    image: gosdoc-worker:dev
+    environment: *app-env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    networks: [core]
+
+  # Автоудаление файлов с истёкшим сроком хранения (в проде — Airflow/CronJob).
+  scheduler:
+    image: gosdoc-api:dev
+    pull_policy: never
+    environment: *app-env
+    command: gosdoc cleanup-files --every 3600
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    networks: [core]
+
+  frontend:
+    build: { <<: *build, target: frontend }
+    image: gosdoc-frontend:dev
+    ports: ["${HTTP_PORT:-8080}:8080"]
+    depends_on:
+      # restart: nginx запоминает IP api при старте — перезапускаем вместе с api.
+      api: { condition: service_healthy, restart: true }
+    networks: [core, edge]

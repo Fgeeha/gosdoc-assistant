@@ -1,0 +1,40 @@
+{{- if .Values.migrations.enabled }}
+# Обычный Job (не hook): ConfigMap и Secret к моменту запуска уже есть. Имя с
+# номером ревизии — новый Job на каждое обновление; api и воркеры ждут миграций
+# в initContainer (gosdoc wait-migrations).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "gosdoc.fullname" . }}-migrate-{{ .Release.Revision }}
+  labels: {{- include "gosdoc.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels: {{- include "gosdoc.selector" (dict "root" . "component" "migrate") | nindent 8 }}
+    spec:
+      {{- include "gosdoc.pod" . | nindent 6 }}
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: {{ include "gosdoc.image" (dict "root" . "name" "api") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - >-
+              gosdoc wait-deps --only postgres --timeout {{ .Values.waitDeps.timeoutSeconds }} &&
+              {{- if .Values.migrations.initStorage }} gosdoc init-storage --timeout 120 && {{- end }}
+              alembic upgrade head
+              {{- if .Values.migrations.createAdmin }} &&
+              if [ -n "$GOSDOC_ADMIN_PASSWORD" ]; then gosdoc create-user --login admin --full-name Администратор
+              --roles sys_admin,user --password-env GOSDOC_ADMIN_PASSWORD --if-missing; fi
+              {{- end }}
+          {{- include "gosdoc.env" . | nindent 10 }}
+          {{- include "gosdoc.mounts" . | nindent 10 }}
+          securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {cpu: "1", memory: 512Mi}}
+      volumes: {{- include "gosdoc.volumes" . | nindent 8 }}
+{{- end }}

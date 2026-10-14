@@ -1,0 +1,80 @@
+# Конвейер GitFlic: lint → test → build → scan → deploy.
+# Агенту нужен Docker (testcontainers в тестах, сборка образов).
+# Адреса реестра, зеркал и сканеров — переменные проекта в GitFlic, не в этом файле:
+#   REGISTRY, REGISTRY_USER, REGISTRY_PASSWORD — реестр образов в контуре
+#   PIP_INDEX_URL, NPM_REGISTRY                 — зеркала PyPI и npm
+#   BASE_IMAGE                                  — базовый образ (по умолчанию Astra Linux)
+#   CI_TOOLS_IMAGE                              — образ с uv, Node.js и Docker CLI
+#   IMAGE_SCANNER_CMD, ML_SCANNER_CMD           — команды сканера образов и Сканера безопасности ML
+#   KUBECONFIG_FILE, HELM_VALUES_FILE, K8S_NAMESPACE — выкатка (этап deploy)
+
+stages:
+  - lint
+  - test
+  - build
+  - scan
+  - deploy
+
+variables:
+  BASE_IMAGE: registry.astralinux.ru/astra/ubi18
+  IMAGE_TAG: $CI_COMMIT_SHORT_SHA
+  UV_INDEX_URL: $PIP_INDEX_URL
+  # Пакеты ставит make install-ci из зеркала; uv run не должен досинхронизировать.
+  UV_NO_SYNC: "1"
+
+lint:
+  stage: lint
+  image: $CI_TOOLS_IMAGE
+  scripts:
+    - make install-ci
+    - cd frontend && npm ci --registry "$NPM_REGISTRY" --no-audit --no-fund && cd ..
+    - make lint
+
+test:
+  stage: test
+  image: $CI_TOOLS_IMAGE
+  variables:
+    # Образы для testcontainers — из реестра в контуре.
+    TC_POSTGRES_IMAGE: $REGISTRY/mirror/postgres:16-alpine
+    TC_SEAWEEDFS_IMAGE: $REGISTRY/mirror/seaweedfs:4.46
+    # Ryuk (сборщик контейнеров testcontainers) тянется с Docker Hub — отключаем;
+    # контейнеры и так останавливаются фикстурами, агент CI одноразовый.
+    TESTCONTAINERS_RYUK_DISABLED: "true"
+  scripts:
+    - make install-ci
+    - uv run pytest --junitxml=report.xml
+  artifacts:
+    paths:
+      - report.xml
+
+build:
+  stage: build
+  image: $CI_TOOLS_IMAGE
+  scripts:
+    - echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY" -u "$REGISTRY_USER" --password-stdin
+    - make images BASE_IMAGE="$BASE_IMAGE" PIP_INDEX_URL="$PIP_INDEX_URL" NPM_REGISTRY="$NPM_REGISTRY" IMAGE_PREFIX="$REGISTRY/gosdoc/gosdoc" IMAGE_TAG="$IMAGE_TAG"
+    - for t in api worker frontend; do docker push "$REGISTRY/gosdoc/gosdoc-$t:$IMAGE_TAG"; done
+
+scan:
+  stage: scan
+  image: $CI_TOOLS_IMAGE
+  scripts:
+    - for t in api worker frontend; do $IMAGE_SCANNER_CMD "$REGISTRY/gosdoc/gosdoc-$t:$IMAGE_TAG"; done
+    # Сканер безопасности ML: зависимости и код ML-пайплайнов (RAG, промпты).
+    - $ML_SCANNER_CMD --path rag --path backend --requirements uv.lock
+
+# Выкатка Helm-чартом (только приложение, ADR-0009). Значения окружения —
+# файл-переменная проекта HELM_VALUES_FILE; kubeconfig — KUBECONFIG_FILE.
+# Секреты (DATABASE_URL и т. п.) — в Secret кластера (existingSecret), не в CI.
+deploy:
+  stage: deploy
+  image: $CI_TOOLS_IMAGE
+  when: manual
+  scripts:
+    - export KUBECONFIG="$KUBECONFIG_FILE"
+    - helm lint deploy/helm/gosdoc -f "$HELM_VALUES_FILE"
+    - >-
+      helm upgrade --install gosdoc deploy/helm/gosdoc
+      --namespace "$K8S_NAMESPACE" -f "$HELM_VALUES_FILE"
+      --set image.registry="$REGISTRY/gosdoc" --set image.tag="$IMAGE_TAG"
+      --wait --timeout 15m
