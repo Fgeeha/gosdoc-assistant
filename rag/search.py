@@ -65,8 +65,11 @@ class ElasticIndex:
         if self.http.head(f"/{self.index}").status_code != 200:
             self._create()
         # Сразу после создания шарды ещё не размещены и запросы получают 503.
+        # Один статус не годится: у индекса без шардов в таблице маршрутизации он
+        # уже yellow, и параллельный воркер проходил ожидание раньше времени.
         r = self.http.get(
-            f"/_cluster/health/{self.index}", params={"wait_for_status": "yellow", "timeout": "30s"}
+            f"/_cluster/health/{self.index}",
+            params={"wait_for_status": "yellow", "wait_for_active_shards": 1, "timeout": "30s"},
         )
         r.raise_for_status()
 
