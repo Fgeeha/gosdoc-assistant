@@ -10,9 +10,10 @@ from gosdoc import cli
 from gosdoc.core.config import get_settings
 from gosdoc.core.queue import get_enqueue
 from gosdoc.core.storage import get_storage
+from gosdoc.docs_check.checker import check_ref
 from gosdoc.docs_check.models import NpaAct
 from gosdoc.docs_check.npa import PgTextIndex, SearchBackends, find_act
-from gosdoc.docs_check.npa_refs import canonical_key
+from gosdoc.docs_check.npa_refs import NpaRef, canonical_key
 from gosdoc.docs_check.service import run_check_job, run_index_job
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -209,3 +210,11 @@ def test_same_law_number_in_different_years(sessions: sessionmaker[Session]) -> 
         # Единственный закон с таким номером находится и без даты, и с неверным годом
         assert find_act(db, 1, canonical_key("federal_law", "59-ФЗ", None)) is not None
         assert find_act(db, 1, canonical_key("federal_law", "59-ФЗ", date(2007, 5, 2))) is not None
+        # …но при другом годе сообщается только о дате: это может быть другой закон
+        found.repealed_at = date(2020, 1, 1)
+        ref = NpaRef("273-ФЗ", "federal_law", "273-ФЗ", date(2012, 12, 29), None, "5", None, 0)
+        assert check_ref(db, 1, ref, ["текст"], date.today())[0].severity == "critical"
+        db.delete(found)
+        db.flush()
+        (only,) = check_ref(db, 1, ref, ["текст"], date.today())
+        assert only.severity == "warning" and "25.12.2008" in only.message
