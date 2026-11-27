@@ -16,10 +16,11 @@
    если в нём есть цитата, дословно найденная в фрагменте нормы из выдачи
    поиска (проверка подстрокой после нормализации пробелов). Иначе замечание
    отбрасывается и пишется в метрики как «неподтверждённое».
-4. **Всё, что выдала модель, — черновик.** Флаг `is_draft=true` у каждой сущности,
-   созданной с участием LLM; в UI — плашка, в DOCX — колонтитул
-   «ЧЕРНОВИК. Сформировано автоматически, требует проверки». Снять флаг может
-   только человек, это действие попадает в аудит.
+4. **Всё, что выдала модель, — черновик.** Флаг `is_draft=true` у писем и
+   отчётов проверки; в UI — плашка «Черновик» (письма, проверка, предложенный
+   маппинг таблиц). В DOCX проверки автор примечаний — «ГосДок (черновик)», а
+   отчёт начинается с предупреждения о черновике. Флаг с письма снимает только
+   руководитель (роль `manager`), это действие попадает в аудит.
 5. **Модульный монолит.** Один backend-сервис с тремя доменными модулями и общим
    ядром, плюс воркеры из того же кода. Микросервисы не нужны: одна команда,
    общая БД, нагрузка — десятки-сотни пользователей (ADR-0001).
@@ -41,33 +42,34 @@ flowchart LR
     API --> RD[(Redis)]
     API --> MQ[[RabbitMQ]]
     API --> FS[(FileStorage<br/>S3 SeaweedFS / PostgreSQL / PVC)]
+    API -->|письмо, маппинг колонок| LLM[Inference / Sherpa<br/>OpenAI-совместимый API]
     MQ --> W[workers<br/>dramatiq]
     W --> PG
     W --> FS
-    W --> LLM[Inference / Sherpa<br/>OpenAI-совместимый API]
+    W -->|замечания, эмбеддинги| LLM
     W --> VEC[(Milvus / ChromaDB)]
     W --> ES[(Elasticsearch)]
     W --> LO[LibreOffice headless<br/>+ Tesseract]
-    AF[Airflow] -->|DAG: обновление НПА| API
-    W -.метрики промптов.-> MLF[MLFlow]
-    W -.пары запрос/ответ, маскированные.-> EV[Evidently collector]
+    AF[Airflow] -->|служебный API /api/internal| API
+    API -.версии промптов, по команде Airflow.-> MLF[MLFlow]
+    AF -.обезличенная статистика замечаний.-> EV[Evidently]
     API & W -.stdout JSON.-> LK[Loki]
 ```
 
 | Компонент | Роль | Dev (docker-compose) | Prod (Kubernetes) |
 |---|---|---|---|
-| `backend` | REST API, авторизация, аудит, постановка задач | да | Deployment + HPA |
-| `workers` | OCR, проверка документов, генерация писем, пакетные таблицы, индексация НПА | да | Deployment, отдельные очереди |
-| `frontend` | SPA, отдаётся Nginx | Vite dev server | Deployment (nginx + статика) |
+| `backend` | REST API, авторизация, аудит, черновик письма и подсказка маппинга (с вызовом модели), постановка задач | да | Deployment |
+| `workers` | OCR, проверка документов, PDF писем, пакетные таблицы, индексация НПА, очистка файлов | да | Deployment, группы очередей |
+| `frontend` | SPA, отдаётся Nginx | nginx + статика (Vite dev server — `make run-frontend`) | Deployment (nginx + статика) |
 | PostgreSQL | основная БД, сессии нет — они в Redis | да | услуга платформы |
-| Redis | сессии, кэш, rate-limit | да | да |
+| Redis | сессии | да | да |
 | RabbitMQ | брокер задач | да | да |
 | FileStorage | файлы | SeaweedFS (`server -s3`) | SeaweedFS S3 / PostgreSQL / PVC — по конфигу |
 | Векторный поиск | фрагменты НПА | ChromaDB | MilvusCluster |
 | Elasticsearch | полнотекст по НПА | да (single-node) | да |
 | LDAP/AD | вход (опционально) | — (mock в тестах) | по конфигу |
 | LLM | генерация | mock-сервер или локальная модель | Inference / Sherpa |
-| Airflow | регламент | нет (задачи запускаются CLI) | услуга платформы, DAG из `airflow/dags` |
+| Airflow | регламент | нет (очистку файлов выполняет контейнер `scheduler`) | услуга платформы, DAG из `airflow/dags` |
 | MLFlow, Evidently, Loki | наблюдаемость | нет (опциональный профиль) | да |
 
 Langflow и Jupyter Lab используются только для прототипов и в
@@ -77,21 +79,23 @@ Langflow и Jupyter Lab используются только для прото�
 
 ```
 backend/gosdoc/
-├── core/          # config, db, auth (local/ldap, сессии), audit, logging (маскирование ПДн), storage, llm, health
-├── docs_check/    # модуль 1 (этап 5): api, service, npa_refs (извлечение ссылок), report, docx_review
-├── letters/       # модуль 2 (этап 4): api, service, gost (реквизиты, оформление), deadlines, style_check
-├── tables/        # модуль 3 (этап 3): api, service, mapping (эвристики + LLM), transforms, validators
-├── api/           # роутеры ядра: auth, admin, files
-├── cli.py         # служебные команды: wait-deps, init-storage, create-user, cleanup-files
+├── core/          # config, db, repository, auth (local/ldap, сессии), audit, logging (маскирование ПДн),
+│                  # storage, files, text (извлечение текста, OCR), llm, queue, mlflow, health
+├── docs_check/    # модуль 1 (этап 5): api, service, checker (ссылки + содержание), npa (база и индексация),
+│                  # npa_refs (извлечение ссылок), docx_review, prompts.yaml
+├── letters/       # модуль 2 (этап 4): api, service, gost (реквизиты, оформление), deadlines, style_check, prompts/*.yaml
+├── tables/        # модуль 3 (этап 3): api, service, mapping (эвристики + LLM), spec, tableio, transforms, validators
+├── api/           # роутеры ядра: auth, admin, files, internal (служебный API для Airflow); deps — пользователь и роли
+├── cli.py         # служебные команды: wait-deps, wait-migrations, init-storage, create-user, cleanup-files
 └── main.py
-workers/           # dramatiq-акторы, импортируют gosdoc.*; образ тот же, что у API
-rag/               # chunker (статья/часть/пункт), indexer, retriever (гибрид + RRF), prompts/*.yaml
-airflow/dags/      # npa_update.py — тонкий DAG, вызывает API backend
+workers/           # dramatiq-акторы, импортируют gosdoc.*; образ воркера = образ API + LibreOffice и Tesseract
+rag/               # chunker (статья/часть/пункт), search (индексы Elasticsearch / Chroma / Milvus, RRF)
+airflow/dags/      # gosdoc_npa_update, gosdoc_maintenance, gosdoc_quality — тонкие DAG, вызывают служебный API
 ```
 
 Абстракции заводятся только там, где реализаций действительно несколько:
 `FileStorage` (s3 / postgres / local), `AuthProvider` (local / ldap),
-`VectorStore` (Chroma / Milvus). LLM-заглушка — отдельный HTTP-сервис
+`VectorIndex` (Chroma / Milvus). LLM-заглушка — отдельный HTTP-сервис
 `deploy/mock-llm`, клиент один.
 
 ## 4. Потоки данных
@@ -105,34 +109,38 @@ sequenceDiagram
     participant W as Воркер
     participant R as RAG (ES + Milvus)
     participant L as LLM
-    U->>A: POST /docs-check (файл)
+    U->>A: POST /api/files (файл), POST /api/docs-check/jobs
     A->>A: аудит, файл → FileStorage, job=queued
-    A->>W: задача check_document
-    W->>W: извлечение текста (DOCX/ODT → python-docx/LibreOffice, PDF → PyMuPDF, скан → Tesseract rus)
+    A->>W: задача process_docs_check
+    W->>W: извлечение текста (DOCX → python-docx, ODT → odfpy, PDF → pdfplumber, скан → Tesseract rus)
     W->>W: извлечение ссылок на НПА (регулярные выражения + нормализация)
     W->>W: сверка ссылок с таблицами npa_acts / npa_editions
-    W->>R: для каждого смыслового блока — гибридный поиск норм
-    W->>L: блок + найденные нормы → JSON с замечаниями и цитатами
-    W->>W: проверка цитат по тексту фрагмента, отбраковка без источника
+    W->>R: для каждого абзаца — гибридный поиск норм
+    W->>L: абзац + найденные нормы → JSON с замечанием и цитатой
+    W->>W: проверка цитаты по тексту фрагмента, отбраковка без источника
     W->>A: отчёт + DOCX с примечаниями → FileStorage, job=done
-    U->>A: GET отчёт / скачать DOCX
+    U->>A: GET отчёт / скачать DOCX, оценка замечаний
 ```
 
 **Проверка ссылок** — без LLM. Ссылка нормализуется в ключ
-`(вид, номер, дата принятия)`, например `(ФЗ, 59-ФЗ, 2006-05-02)`. Результаты:
+`(вид, номер, дата принятия)`, например `(ФЗ, 59-ФЗ, 2006-05-02)`. Результаты
+(`findings.kind = npa_ref`):
 
-| Статус | Условие | Критичность |
+| Замечание | Условие | `severity` |
 |---|---|---|
-| `not_found` | акта нет в базе | предупреждение |
-| `repealed` | у акта `repealed_at` ≤ даты проверки | критично |
-| `outdated_edition` | ссылка указывает редакцию/дату, после которой есть новые редакции | существенно |
-| `ok` | актуально | — |
+| акт не найден | акта нет в базе | `info` |
+| акт утратил силу | у акта `repealed_at` ≤ даты проверки | `critical` |
+| неверная дата акта | дата в ссылке не совпадает с датой принятия в базе | `warning` |
+| устаревшая редакция | ссылка указывает редакцию, после которой есть действующая; для статьи — только если её текст изменился | `warning` |
+| нет такой статьи | указанной статьи/части нет в действующей редакции | `warning` |
 
-**Смысловая проверка.** Документ режется на блоки (абзацы → окна ~1500
-символов). Поиск: BM25 в Elasticsearch и векторный в Milvus, объединение через
-Reciprocal Rank Fusion, top-k подбирается под `LLM_MAX_CONTEXT`, фильтр — только действующие редакции. Промпт
-требует ответ строго в JSON: `{severity, doc_fragment, npa_chunk_id, quote,
-recommendation}`. Цитата проверяется программно (принцип 3).
+**Смысловая проверка.** Проверяются абзацы не короче 80 символов, не более 30
+на документ. Поиск: BM25 в Elasticsearch и векторный в Chroma/Milvus,
+объединение через Reciprocal Rank Fusion, в выдаче 5 фрагментов; из них
+остаются только действующие редакции неотменённых актов, под нормы отводится
+половина `LLM_MAX_CONTEXT`. Промпт требует ответ строго в JSON: `{verdict,
+source, quote, explanation, recommendation}`, где `source` — номер нормы из
+переданного списка. Цитата проверяется программно (принцип 3).
 
 **DOCX с рецензированием.** Примечания — нативные комментарии Word
 (`python-docx` ≥ 1.2). Правки в режиме рецензирования (`w:ins`/`w:del`)
@@ -152,11 +160,15 @@ python-docx не поддерживает. В MVP — только примеч�
    бланка по ГОСТ Р 7.0.97-2016 (поля, шрифт, расположение реквизитов
    проверяются тестом по XML документа). Модель реквизиты не формирует.
 4. Проверки: срок ответа (59-ФЗ — 30 дней с регистрации, продление ещё на 30;
-   праздники — по таблице производственного календаря, её ведёт администратор), ссылки на НПА в тексте —
-   через модуль 1 (синхронно, только проверка ссылок), стиль — словарь
-   разговорных/недопустимых оборотов + длина предложений.
+   праздники — по таблице производственного календаря, её ведёт администратор), стиль — словарь
+   разговорных/недопустимых оборотов + длина предложений. Ссылки на НПА в
+   тексте письма не проверяются: модули независимы, письмо можно отдельно
+   загрузить в раздел «Проверка».
 5. Редактирование в UI → каждое сохранение = новая `letter_versions`. PDF — через
    LibreOffice headless в воркере.
+
+Черновик и DOCX формируются синхронно в `api` (модель вызывается в рамках
+запроса), через очередь идёт только PDF.
 
 MVP: ответ на обращение гражданина, запрос, сопроводительное письмо.
 
@@ -223,7 +235,7 @@ erDiagram
     npa_acts ||--o{ npa_change_log : logs
     letter_blanks ||--o{ letters : used_by
     letters ||--o{ letter_versions : has
-    table_mappings ||--o{ jobs : applied_in
+    users ||--o{ table_mappings : owns
     users ||--o{ audit_log : acts
 ```
 
@@ -234,18 +246,18 @@ erDiagram
 | `files` | id, organization_id, owner_id, storage_key, original_name, mime, size, sha256, contains_pdn, created_at, expires_at | 2 |
 | `file_blobs` | storage_key, data bytea — только для бэкенда `postgres` | 2 |
 | `audit_log` | id, at, organization_id, user_id, ip, action, object_type, object_id, details jsonb (ПДн замаскированы) | 2 |
-| `jobs` | id, organization_id, kind (`docs_check`/`letter`/`table`/`npa_index`), status, input_file_id, params jsonb, result jsonb, error, created_by, timestamps | 3 |
-| `table_mappings` | id, organization_id, name, spec jsonb, target_template_file_id, owner_id, shared | 3 |
+| `jobs` | id, organization_id, kind (`docs_check`/`letter_pdf`/`table`), status, input_file_id, params jsonb, result jsonb, error, created_by, timestamps | 3 |
+| `table_mappings` | id, organization_id, name, spec jsonb, target_template_file_id, owner_id, shared, timestamps | 3 |
 | `letter_blanks` | id, organization_id, name, template_file_id, fields jsonb, uploaded_by, active | 4 |
-| `letters` | id, organization_id, type, blank_id, incoming_file_id, outgoing_number, date, addressee, executor, deadline, status, is_draft | 4 |
-| `letter_versions` | id, letter_id, version, body jsonb, author_id (null = LLM), docx_file_id, pdf_file_id, created_at | 4 |
+| `letters` | id, organization_id, type, blank_id, incoming_file_id, outgoing_number, date, addressee, executor, deadline, status (`draft`/`approved`), is_draft, requisites jsonb, created_by, created_at | 4 |
+| `letter_versions` | id, letter_id, version, body jsonb, author_id (null = LLM), docx_file_id, pdf_file_id, meta jsonb (`prompt_version`, `model_name`), created_at | 4 |
 | `holidays` | date, is_workday, note — только отклонения от календаря по умолчанию (сб, вс, ст. 112 ТК РФ); календарь федеральный, общий | 4 |
-| `npa_acts` | id, organization_id (null = общий), kind, number, adopted_at, title, issuer, repealed_at, canonical_key | 5 |
-| `npa_editions` | id, act_id, effective_from, effective_to, source_file_id, text_sha256 | 5 |
-| `npa_chunks` | id, edition_id, path (`ст. 12 ч. 1 п. 3`), text, vector_id | 5 |
-| `npa_change_log` | id, act_id, change (`new_edition`/`repealed`/`added`), details jsonb, at | 5 |
-| `check_reports` | id, organization_id, job_id, summary jsonb, result_docx_file_id, is_draft | 5 |
-| `findings` | id, report_id, kind (`npa_ref`/`content`), severity, doc_fragment, npa_chunk_id, quote, recommendation, user_verdict | 5 |
+| `npa_acts` | id, organization_id (null = общий), kind, number, adopted_at, title, issuer, repealed_at, repealed_note, canonical_key | 5 |
+| `npa_editions` | id, act_id, effective_from, effective_to, source_file_id, text_sha256, status (состояние индексации), error, indexed_at | 5 |
+| `npa_chunks` | id, edition_id, path (`ст. 12 ч. 1 п. 3`), article, heading, text; id фрагмента служит ключом в обоих индексах | 5 |
+| `npa_change_log` | id, act_id, change (`added`/`new_edition`/`repealed`/`restored`/`reindexed`), details jsonb, user_id, at | 5 |
+| `check_reports` | id, organization_id, job_id, summary jsonb, result_docx_file_id, report_docx_file_id, is_draft, created_at | 5 |
+| `findings` | id, report_id, kind (`npa_ref`/`content`), severity, doc_fragment, npa_ref, npa_chunk_id, norm, quote, message, recommendation, user_verdict | 5 |
 
 Таблицы создаются миграциями Alembic на том этапе, где появляется модуль.
 
@@ -253,8 +265,12 @@ erDiagram
 приложения дополнительно отзываются эти права. Партиционирование по месяцам —
 когда объём этого потребует.
 
-Версии промптов и моделей хранятся в MLFlow; в `jobs.result` пишутся
-`prompt_version` и `model_name` для воспроизводимости.
+Индексация НПА — не запись в `jobs`: её состояние хранится в
+`npa_editions.status`.
+
+Версии промптов и моделей хранятся в MLFlow; для воспроизводимости
+`prompt_version` и `model_name` пишутся в `check_reports.summary` и
+`letter_versions.meta`.
 
 ## 6. Безопасность и 152-ФЗ
 
@@ -276,7 +292,9 @@ erDiagram
 - **Маскирование ПДн в логах:** форматтер `JsonFormatter` на корневом логгере (сообщение маскируется уже после подстановки аргументов), регулярные
   выражения для СНИЛС, ИНН, паспорта, телефонов, e-mail, номеров карт.
   Тексты документов и промпты в логи не пишутся вообще — только id и длины.
-  В Evidently и MLFlow уходят те же маскированные данные.
+  В Evidently уходят только обезличенные признаки замечаний (вид, критичность,
+  оценка сотрудника, версия промпта) без текстов и цитат; в MLFlow — тексты
+  промптов, без данных документов.
 - **Хранение файлов (ADR-0004):** все пользовательские загрузки считаются
   содержащими ПДн и получают `expires_at = now + FILE_RETENTION_DAYS` (30 по
   умолчанию). Удаление — фоновая задача по метаданным в PostgreSQL, не
@@ -293,20 +311,28 @@ erDiagram
 flowchart LR
     ADM[npa_admin: раздел «Нормативная база»<br/>DOCX/HTML/PDF, пакетно или zip] --> API[backend]
     API --> FS[(FileStorage)]
-    API --> W[воркер: index_npa]
-    AF[Airflow DAG npa_maintenance<br/>ежесуточно] -->|POST /api/admin/npa/reindex| API
-    W --> D{sha256 изменился?}
-    D -- нет --> X[пропуск]
-    D -- да --> E[новая npa_edition<br/>у старой effective_to]
-    E --> C[чанкинг по структуре<br/>статья → часть → пункт]
-    C --> I[индексация ES + Milvus<br/>метаданные: act_id, edition_id, path, действует]
+    API --> D{редакция с этой датой<br/>начала действия уже есть?}
+    D -- да --> R[та же npa_edition<br/>переиндексация]
+    D -- нет --> E[новая npa_edition<br/>у предыдущей effective_to]
     E --> LOG[npa_change_log]
+    R --> W[воркер: index_npa_edition]
+    E --> W
+    AF[Airflow DAG gosdoc_npa_update<br/>ежесуточно] -->|POST /api/internal/npa/reindex| API
+    W --> C[чанкинг по структуре<br/>статья → часть → пункт]
+    C --> I[индексация ES + Chroma/Milvus]
 ```
 
-Старые редакции не удаляются: они хранятся с `effective_to` и по умолчанию
-исключаются из поиска фильтром. Это позволяет проверять «на дату документа».
-DAG также чистит индексы от удалённых актов и запускает очистку файлов с
-истёкшим сроком хранения.
+Редакция определяется датой начала действия: повторная загрузка с той же
+датой заменяет файл и переиндексирует редакцию, с новой — создаёт новую
+редакцию, а границы действия соседних пересчитываются. Хеш текста
+(`text_sha256`) сохраняется, но загрузку не пропускает.
+
+Старые редакции не удаляются: они хранятся с `effective_to` и при смысловой
+проверке отсеиваются (остаются только действующие сегодня). Это позволяет
+сравнивать текст статьи в редакции, на которую ссылается документ, с
+действующей. DAG `gosdoc_npa_update` повторяет незавершённые индексации, а по
+воскресеньям переиндексирует всю базу; очистка файлов с истёкшим сроком
+хранения — отдельный DAG `gosdoc_maintenance`.
 
 ## 8. Инфраструктура и CI/CD
 
@@ -350,8 +376,9 @@ DAG также чистит индексы от удалённых актов и
 ## 9. Локальная разработка
 
 `make up-local` поднимает PostgreSQL, Redis, RabbitMQ, Elasticsearch, ChromaDB,
-SeaweedFS (`server -s3`), mock-LLM, api, worker и frontend; миграции и
-создание администратора выполняются автоматически. Реальная модель
+SeaweedFS (`server -s3`), mock-LLM, api, worker, scheduler (очистка файлов
+вместо Airflow) и frontend; миграции и создание администратора выполняются
+автоматически. Реальная модель
 подключается переменными `LLM_BASE_URL` / `EMBEDDINGS_BASE_URL`. Для тестов
 не нужны ни GPU, ни модель.
 
