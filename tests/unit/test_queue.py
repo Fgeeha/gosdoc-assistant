@@ -35,3 +35,19 @@ def test_broker_uses_tls_options(monkeypatch: pytest.MonkeyPatch, url: str) -> N
     monkeypatch.setattr(queue, "amqp_ssl_options", lambda _: tls)
     params = queue.get_broker.__wrapped__().parameters
     assert all(p.ssl_options is tls for p in (params if isinstance(params, list) else [params]))
+
+
+def test_health_check_tries_every_node(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gosdoc.core import health
+
+    hosts: list[str] = []
+
+    class Connection:
+        def __init__(self, nodes: list[pika.URLParameters]) -> None:
+            hosts.extend(n.host for n in nodes)
+
+        def close(self) -> None: ...
+
+    monkeypatch.setattr(health.pika, "BlockingConnection", Connection)
+    health._checks(Settings(rabbitmq_url="amqp://u:p@a:5672/;amqp://u:p@b:5672/"))["rabbitmq"]()
+    assert hosts == ["a", "b"]
