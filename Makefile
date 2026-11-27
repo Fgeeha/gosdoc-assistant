@@ -102,9 +102,10 @@ images: ## Собрать прод-образы (BASE_IMAGE=... для РЕД О
 
 # --- Kubernetes --------------------------------------------------------------
 
-helm-lint: ## Проверить Helm-чарт (lint и рендер с примером значений)
+helm-lint: ## Проверить Helm-чарт (lint, рендер с примером значений и с OpenBao)
 	$(HELM) lint /chart --set secret.DATABASE_URL=x
 	$(HELM) template gosdoc /chart -f /chart/values-example.yaml > /dev/null
+	$(HELM) template gosdoc /chart --set openbao.enabled=true --set-string podAnnotations.agent-inject=true > /dev/null
 
 # --- Обслуживание ------------------------------------------------------------
 

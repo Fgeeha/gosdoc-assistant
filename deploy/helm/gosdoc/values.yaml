@@ -40,6 +40,19 @@ config:
 existingSecret: ""
 secret: {}
 
+# Секреты из OpenBao (agent injector). Агент по аннотациям подов пишет файл
+# envFile с переменными окружения (KEY='значение'), контейнеры api, воркеров и
+# Job миграций читают его перед запуском. При enabled Secret чарта не создаётся
+# (existingSecret, если задан, подключается как раньше), а подам выдаётся
+# ServiceAccount с именем релиза — к нему привязывается роль в OpenBao.
+openbao:
+  enabled: false
+  envFile: /vault/secrets/.env
+
+# Аннотации подов api, воркеров и Job миграций — в том числе аннотации
+# агента OpenBao (роль, пути секретов, шаблон файла). Пример — values-example.yaml.
+podAnnotations: {}
+
 # Локальный корневой CA (TLS к БД, S3, Inference, LDAP): из Secret или ConfigMap.
 caBundle:
   secretName: ""
@@ -79,6 +92,7 @@ migrations:
   enabled: true
   initStorage: true       # создать бакет S3, если его нет
   createAdmin: true       # создать admin при первом запуске (пароль — GOSDOC_ADMIN_PASSWORD)
+  podAnnotations: {}      # дополнительно к podAnnotations, только для Job миграций
 
 waitDeps:
   timeoutSeconds: 300

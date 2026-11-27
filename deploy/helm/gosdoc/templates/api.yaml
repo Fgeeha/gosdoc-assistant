@@ -14,7 +14,9 @@ spec:
       labels: {{- include "gosdoc.selector" (dict "root" . "component" "api") | nindent 8 }}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum }}
+        {{- with include "gosdoc.podAnnotations" (dict "root" .) }}{{ . | nindent 8 }}{{ end }}
     spec:
+      {{- include "gosdoc.serviceAccount" . | nindent 6 }}
       {{- include "gosdoc.pod" . | nindent 6 }}
       initContainers:
         {{- include "gosdoc.waitInit" (dict "root" . "deps" "postgres,redis" "migrations" true) | nindent 8 }}
@@ -22,6 +24,7 @@ spec:
         - name: api
           image: {{ include "gosdoc.image" (dict "root" . "name" "api") }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with include "gosdoc.envFileCommand" . }}{{ . | nindent 10 }}{{ end }}
           args: ["uvicorn", "gosdoc.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", {{ .Values.api.forwardedAllowIps | quote }}]
           ports: [{name: http, containerPort: 8000}]
           {{- include "gosdoc.env" . | nindent 10 }}
