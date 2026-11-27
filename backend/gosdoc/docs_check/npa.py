@@ -8,7 +8,7 @@ from datetime import UTC, date, datetime, timedelta
 from itertools import pairwise
 from typing import Any
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, or_, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from gosdoc.core.config import Settings
@@ -28,18 +28,62 @@ EMBED_BATCH = 32
 @dataclass(frozen=True)
 class SearchBackends:
     text: TextIndex
-    vectors: VectorIndex
+    vectors: VectorIndex | None  # None — векторный поиск не настроен
     llm: LLMClient
 
 
-def make_backends(s: Settings) -> SearchBackends:
-    verify: Any = s.ca_bundle or True
-    vectors: VectorIndex = (
-        MilvusIndex(s.vector_store_url, verify=verify)
-        if s.vector_store == "milvus"
-        else ChromaIndex(s.vector_store_url, verify=verify)
+class PgTextIndex:
+    """Полнотекстовый поиск в PostgreSQL по npa_chunks.tsv — замена Elasticsearch.
+
+    Отдельного индекса нет: фрагменты уже лежат в npa_chunks, поэтому запись и
+    удаление здесь пустые. Слова запроса объединяются по «или», как в match у Elasticsearch.
+    """
+
+    _SEARCH = text(
+        """
+        WITH q AS (
+            -- Приведение к tsquery, а не to_tsquery: лексемы уже нормализованы,
+            -- повторный стемминг их исказил бы («обращен» → «обращ»).
+            SELECT replace(plainto_tsquery('russian', :query)::text, '&', '|')::tsquery AS q
+        )
+        SELECT c.id
+        FROM npa_chunks c
+        JOIN npa_editions e ON e.id = c.edition_id
+        JOIN npa_acts a ON a.id = e.act_id, q
+        WHERE c.tsv @@ q.q AND (a.organization_id IS NULL OR a.organization_id = :org)
+        ORDER BY ts_rank(c.tsv, q.q, 1) DESC, c.id
+        LIMIT :k
+        """
     )
-    return SearchBackends(ElasticIndex(s.elasticsearch_url, verify=verify), vectors, LLMClient(s))
+
+    def __init__(self, sessions: sessionmaker[Session]) -> None:
+        self.sessions = sessions
+
+    def ensure(self) -> None: ...
+    def add(self, chunks: Sequence[IndexedChunk]) -> None: ...
+    def delete_edition(self, edition_id: int) -> None: ...
+
+    def search(self, query: str, organization_id: int, k: int) -> list[str]:
+        with self.sessions() as db:
+            rows = db.execute(self._SEARCH, {"query": query, "org": organization_id, "k": k})
+            return [str(r[0]) for r in rows]
+
+
+def make_backends(s: Settings, sessions: sessionmaker[Session]) -> SearchBackends:
+    verify: Any = s.ca_bundle or True
+    text_index: TextIndex = (
+        ElasticIndex(s.elasticsearch_url, verify=verify)
+        if s.elasticsearch_url
+        else PgTextIndex(sessions)
+    )
+    vectors: VectorIndex | None = None
+    if s.vector_store_url:
+        vectors = (
+            MilvusIndex(s.vector_store_url, verify=verify)
+            if s.vector_store == "milvus"
+            else ChromaIndex(s.vector_store_url, verify=verify)
+        )
+    return SearchBackends(text_index, vectors, LLMClient(s))
 
 
 def act_label(act: NpaAct) -> str:
@@ -157,7 +201,7 @@ def index_edition(
     s: Settings,
     edition_id: int,
 ) -> int:
-    """Разбивка редакции на фрагменты и запись в PostgreSQL, Elasticsearch и векторный индекс."""
+    """Разбивка редакции на фрагменты и запись в PostgreSQL и настроенные поисковые индексы."""
     with sessions.begin() as db:
         edition = db.get(NpaEdition, edition_id)
         act = db.get(NpaAct, edition.act_id) if edition else None
@@ -194,13 +238,14 @@ def index_edition(
     backends.text.ensure()
     backends.text.delete_edition(edition_id)
     backends.text.add(chunks)
-    for i in range(0, len(chunks), EMBED_BATCH):
-        batch = chunks[i : i + EMBED_BATCH]
-        vectors = backends.llm.embed([c.text for c in batch])
-        if i == 0:
-            backends.vectors.ensure(len(vectors[0]))
-            backends.vectors.delete_edition(edition_id)
-        backends.vectors.add(batch, vectors)
+    if backends.vectors is not None:
+        for i in range(0, len(chunks), EMBED_BATCH):
+            batch = chunks[i : i + EMBED_BATCH]
+            vectors = backends.llm.embed([c.text for c in batch])
+            if i == 0:
+                backends.vectors.ensure(len(vectors[0]))
+                backends.vectors.delete_edition(edition_id)
+            backends.vectors.add(batch, vectors)
 
     with sessions.begin() as db:
         edition = db.get(NpaEdition, edition_id)
@@ -208,6 +253,15 @@ def index_edition(
             edition.status, edition.error, edition.indexed_at = "indexed", None, datetime.now(UTC)
     log.info("Редакция %s проиндексирована: %d фрагментов", edition_id, len(chunks))
     return len(chunks)
+
+
+def queue_editions(db: Session, full: bool) -> list[int]:
+    """Помечает редакции к индексации: все (full) или только не завершённые. Возвращает их id."""
+    stmt = select(NpaEdition) if full else select(NpaEdition).where(NpaEdition.status != "indexed")
+    editions = list(db.scalars(stmt))
+    for e in editions:
+        e.status = "queued"
+    return [e.id for e in editions]
 
 
 def mark_failed(sessions: sessionmaker[Session], edition_id: int, message: str) -> None:

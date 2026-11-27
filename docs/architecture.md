@@ -65,8 +65,8 @@ flowchart LR
 | Redis | сессии | да | да |
 | RabbitMQ | брокер задач | да | да |
 | FileStorage | файлы | SeaweedFS (`server -s3`) | SeaweedFS S3 / PostgreSQL / PVC — по конфигу |
-| Векторный поиск | фрагменты НПА | ChromaDB | MilvusCluster |
-| Elasticsearch | полнотекст по НПА | да (single-node) | да |
+| Векторный поиск | фрагменты НПА | ChromaDB | MilvusCluster; необязателен |
+| Elasticsearch | полнотекст по НПА | да (single-node) | необязателен: без него — полнотекст PostgreSQL |
 | LDAP/AD | вход (опционально) | — (mock в тестах) | по конфигу |
 | LLM | генерация | mock-сервер или локальная модель | Inference / Sherpa |
 | Airflow | регламент | нет (очистку файлов выполняет контейнер `scheduler`) | услуга платформы, DAG из `airflow/dags` |
@@ -86,7 +86,7 @@ backend/gosdoc/
 ├── letters/       # модуль 2 (этап 4): api, service, gost (реквизиты, оформление), deadlines, style_check, prompts/*.yaml
 ├── tables/        # модуль 3 (этап 3): api, service, mapping (эвристики + LLM), spec, tableio, transforms, validators
 ├── api/           # роутеры ядра: auth, admin, files, internal (служебный API для Airflow); deps — пользователь и роли
-├── cli.py         # служебные команды: wait-deps, wait-migrations, init-storage, create-user, cleanup-files
+├── cli.py         # служебные команды: wait-deps, wait-migrations, init-storage, create-user, cleanup-files, reindex-npa
 └── main.py
 workers/           # dramatiq-акторы, импортируют gosdoc.*; образ воркера = образ API + LibreOffice и Tesseract
 rag/               # chunker (статья/часть/пункт), search (индексы Elasticsearch / Chroma / Milvus, RRF)
@@ -135,8 +135,9 @@ sequenceDiagram
 | нет такой статьи | указанной статьи/части нет в действующей редакции | `warning` |
 
 **Смысловая проверка.** Проверяются абзацы не короче 80 символов, не более 30
-на документ. Поиск: BM25 в Elasticsearch и векторный в Chroma/Milvus,
-объединение через Reciprocal Rank Fusion, в выдаче 5 фрагментов; из них
+на документ. Поиск: BM25 в Elasticsearch (без `ELASTICSEARCH_URL` — полнотекст
+PostgreSQL по `npa_chunks.tsv`) и векторный в Chroma/Milvus (без
+`VECTOR_STORE_URL` отключён), объединение через Reciprocal Rank Fusion, в выдаче 5 фрагментов; из них
 остаются только действующие редакции неотменённых актов, под нормы отводится
 половина `LLM_MAX_CONTEXT`. Промпт требует ответ строго в JSON: `{verdict,
 source, quote, explanation, recommendation}`, где `source` — номер нормы из
@@ -254,7 +255,7 @@ erDiagram
 | `holidays` | date, is_workday, note — только отклонения от календаря по умолчанию (сб, вс, ст. 112 ТК РФ); календарь федеральный, общий | 4 |
 | `npa_acts` | id, organization_id (null = общий), kind, number, adopted_at, title, issuer, repealed_at, repealed_note, canonical_key | 5 |
 | `npa_editions` | id, act_id, effective_from, effective_to, source_file_id, text_sha256, status (состояние индексации), error, indexed_at | 5 |
-| `npa_chunks` | id, edition_id, path (`ст. 12 ч. 1 п. 3`), article, heading, text; id фрагмента служит ключом в обоих индексах | 5 |
+| `npa_chunks` | id, edition_id, path (`ст. 12 ч. 1 п. 3`), article, heading, text, tsv (вычисляется из text, полнотекстовый поиск без Elasticsearch); id фрагмента служит ключом в обоих индексах | 5 |
 | `npa_change_log` | id, act_id, change (`added`/`new_edition`/`repealed`/`restored`/`reindexed`), details jsonb, user_id, at | 5 |
 | `check_reports` | id, organization_id, job_id, summary jsonb, result_docx_file_id, report_docx_file_id, is_draft, created_at | 5 |
 | `findings` | id, report_id, kind (`npa_ref`/`content`), severity, doc_fragment, npa_ref, npa_chunk_id, norm, quote, message, recommendation, user_verdict | 5 |

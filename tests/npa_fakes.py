@@ -50,12 +50,13 @@ class MemoryVectors:
         return []  # ранжирование в тестах — по тексту
 
 
-def checking_model(prompts: list[str]) -> LLMClient:
+def checking_model(prompts: list[str], embeddings: bool = True) -> LLMClient:
     """Находит в нормах «ст. 12 ч. 1» и сообщает о нарушении срока с дословной цитатой;
     на абзац о согласии отвечает выдуманной цитатой (такой ответ должен быть отброшен)."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/embeddings"):
+            assert embeddings, "эмбеддинги без векторного индекса не нужны"
             texts = json.loads(request.content)["input"]
             return httpx.Response(
                 200,

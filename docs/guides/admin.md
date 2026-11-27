@@ -20,6 +20,11 @@ Milvus (REST API v2), S3-хранилище (SeaweedFS), Inference (OpenAI-со�
 API: чат и `/v1/embeddings`), при необходимости — LDAP/AD, Airflow, MLFlow,
 Evidently, Loki.
 
+Elasticsearch и Milvus необязательны: с пустым `ELASTICSEARCH_URL` нормы ищутся
+полнотекстовым поиском PostgreSQL, с пустым `VECTOR_STORE_URL` векторный поиск
+и эмбеддинги не используются. Проверка документов работает и так, но близкие
+по смыслу нормы без общих слов с абзацем находятся хуже.
+
 Без PostgreSQL и Redis приложение не работает (readiness отдаёт 503). Без
 остальных сервисов работают вход и те модули, которым сервис не нужен;
 состояние всех зависимостей видно в ответе `/health/ready`.
@@ -135,7 +140,8 @@ Variables: `gosdoc_api_url` (адрес ingress), `gosdoc_service_token`
 | `LLM_BASE_URL`, `LLM_MODEL` | — | сервис Inference и модель |
 | `LLM_MAX_CONTEXT` | 8192 | контекст модели в токенах; от него зависят размер фрагментов НПА и объём норм в запросе |
 | `EMBEDDINGS_BASE_URL`, `EMBEDDINGS_MODEL` | как у LLM | модель эмбеддингов (может быть отдельным сервисом) |
-| `VECTOR_STORE` | chroma | `milvus` в проде |
+| `ELASTICSEARCH_URL` | пусто | полнотекстовый поиск по НПА; пусто — поиск средствами PostgreSQL |
+| `VECTOR_STORE_URL`, `VECTOR_STORE` | пусто, chroma | векторный поиск по НПА (`milvus` в проде); пустой адрес — отключён, эмбеддинги не нужны |
 | `STORAGE_BACKEND` | s3 | `s3` / `postgres` / `local` |
 | `FILE_RETENTION_DAYS` | 30 | срок хранения пользовательских файлов (ПДн) |
 | `STORAGE_MAX_FILE_MB` | 50 | максимальный размер файла |
@@ -144,8 +150,9 @@ Variables: `gosdoc_api_url` (адрес ingress), `gosdoc_service_token`
 | `AUTH_MIN_PASSWORD_LENGTH` | 12 | минимальная длина пароля |
 | `SESSION_TTL_MINUTES` | 480 | сессия продлевается при каждом запросе |
 
-После смены модели эмбеддингов запустите полную переиндексацию (DAG в
-воскресенье или «переиндексировать» у каждого акта).
+После смены модели эмбеддингов запустите полную переиндексацию:
+`gosdoc reindex-npa --wait` (см. 3.2), DAG в воскресенье или
+«переиндексировать» у каждого акта.
 
 ### 3.1 Вход через AD/LDAP
 
@@ -160,6 +167,82 @@ LDAP_GROUP_ROLES={"CN=GosDoc-Users,OU=Groups,DC=...": "user", "GosDoc-NPA": "npa
 Сертификат сервера каталога проверяется всегда. Роли назначаются по группам
 при каждом входе; пользователь без разрешённой группы не входит. Пароли AD в
 системе не хранятся и не меняются.
+
+### 3.2 Поиск по НПА: с Elasticsearch и Milvus или без них
+
+Режим задают два адреса; каждый сервис подключается независимо от другого.
+
+| `ELASTICSEARCH_URL` | `VECTOR_STORE_URL` | Как ищутся нормы |
+|---|---|---|
+| пусто | пусто | полнотекстовый поиск PostgreSQL |
+| задан | пусто | Elasticsearch (BM25) |
+| пусто | задан | PostgreSQL + векторный поиск |
+| задан | задан | Elasticsearch + векторный поиск (полный режим) |
+
+Акты, редакции и их исходные файлы хранятся в PostgreSQL и файловом
+хранилище, а Elasticsearch и векторная база — производные индексы. Поэтому
+переход в любую сторону не теряет данных: акты, редакции и отчёты остаются.
+Переиндексация заново читает исходные файлы редакций, так что файловое
+хранилище (S3) в это время должно быть доступно. Фрагменты при этом
+пересоздаются: в старых отчётах цитата и норма сохраняются текстом, но
+пропадает ссылка замечания на фрагмент базы.
+
+**Подключить Elasticsearch и/или Milvus**
+
+1. Закажите сервисы. Elasticsearch 8 — с анализатором `russian`; для Milvus
+   нужна модель эмбеддингов на Inference (`EMBEDDINGS_MODEL`, при отдельном
+   сервисе — `EMBEDDINGS_BASE_URL`).
+2. Если сервис уже использовался раньше, удалите в нём старые данные: индекс
+   `npa_chunks` в Elasticsearch и коллекцию `npa_chunks` в Milvus. Для Milvus
+   это обязательно при смене модели эмбеддингов (другая размерность вектора).
+3. Пропишите адреса в `values.yaml` и обновите релиз:
+
+   ```yaml
+   config:
+     ELASTICSEARCH_URL: https://es.<домен>:9200
+     VECTOR_STORE: milvus
+     VECTOR_STORE_URL: https://milvus.<домен>:19530
+     EMBEDDINGS_MODEL: <модель>
+   ```
+
+   ```bash
+   helm upgrade gosdoc deploy/helm/gosdoc -n gosdoc -f values.yaml
+   ```
+
+4. Дождитесь перезапуска подов и постройте индексы:
+
+   ```bash
+   kubectl -n gosdoc rollout status deploy/gosdoc-worker-default
+   kubectl -n gosdoc exec deploy/gosdoc-worker-default -- gosdoc reindex-npa --wait
+   ```
+
+   Команда ставит все редакции в очередь `npa` и печатает счётчики
+   (`queued` / `indexed` / `failed`), пока очередь не опустеет. Код возврата 1 —
+   есть редакции с ошибкой (причина видна у редакции в разделе «Нормативная
+   база») или индексация не уложилась в `--timeout` (по умолчанию 7200 с):
+   после устранения причины повторите команду.
+5. Проверьте: `GET /health/ready` показывает `elasticsearch` и `vector_store`
+   со значением `ok`, пробная проверка документа даёт смысловые замечания.
+
+С шага 3 и до завершения шага 4 индексы пусты или неполны: проверки документов
+в это время завершаются ошибкой или находят не все нормы. Делайте переход в нерабочее
+время и предупредите пользователей; проверки, запущенные в этом окне, нужно
+повторить.
+
+**Отключить Elasticsearch и/или Milvus**
+
+1. Очистите адрес в `values.yaml` (`ELASTICSEARCH_URL: ""`,
+   `VECTOR_STORE_URL: ""`) и выполните `helm upgrade`.
+2. Больше ничего не требуется: поиск в PostgreSQL готов сразу, переиндексация
+   не нужна. Сервисы можно снять с обслуживания.
+
+Пока сервис отключён, его индекс не обновляется и устаревает. При повторном
+подключении действуйте как при первом, начиная с шага 2.
+
+В локальном окружении (`make up-local`) Elasticsearch и ChromaDB поднимаются
+всегда; чтобы проверить работу без них, очистите `ELASTICSEARCH_URL` и
+`VECTOR_STORE_URL` в `deploy/docker-compose.dev.yml`. Переиндексация —
+`docker compose --env-file .env -f deploy/docker-compose.dev.yml exec worker gosdoc reindex-npa --wait`.
 
 ## 4. Работа администратора системы
 
@@ -258,5 +341,5 @@ LDAP_GROUP_ROLES={"CN=GosDoc-Users,OU=Groups,DC=...": "user", "GosDoc-NPA": "npa
 
 Служебные команды (в контейнере api): `gosdoc wait-deps`,
 `gosdoc wait-migrations`, `gosdoc init-storage`,
-`gosdoc cleanup-files [--every N]`,
+`gosdoc cleanup-files [--every N]`, `gosdoc reindex-npa [--wait]`,
 `gosdoc create-user --login … --roles … --password-env VAR`.

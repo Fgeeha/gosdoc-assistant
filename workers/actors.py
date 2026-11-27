@@ -36,12 +36,20 @@ def process_letter_pdf(job_id: int) -> None:
 @dramatiq.actor(queue_name="npa", max_retries=0, time_limit=60 * 60 * 1000)
 def index_npa_edition(edition_id: int) -> None:
     run_index_job(
-        get_sessionmaker(), get_storage(), make_backends(get_settings()), get_settings(), edition_id
+        get_sessionmaker(),
+        get_storage(),
+        make_backends(get_settings(), get_sessionmaker()),
+        get_settings(),
+        edition_id,
     )
 
 
 @dramatiq.actor(queue_name="docs_check", max_retries=0, time_limit=60 * 60 * 1000)
 def process_docs_check(job_id: int) -> None:
     run_check_job(
-        get_sessionmaker(), get_storage(), make_backends(get_settings()), get_settings(), job_id
+        get_sessionmaker(),
+        get_storage(),
+        make_backends(get_settings(), get_sessionmaker()),
+        get_settings(),
+        job_id,
     )

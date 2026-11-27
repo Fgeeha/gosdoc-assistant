@@ -11,7 +11,7 @@ import sys
 import time
 
 from botocore.exceptions import BotoCoreError, ClientError
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from gosdoc.core.auth import ROLES, AuthError, check_password_policy, new_local_user, validate_roles
 from gosdoc.core.config import Settings, get_settings
@@ -19,7 +19,10 @@ from gosdoc.core.db import User, get_sessionmaker
 from gosdoc.core.files import cleanup_expired_files
 from gosdoc.core.health import migrations_applied, wait_for_dependencies
 from gosdoc.core.logging import setup_logging
+from gosdoc.core.queue import enqueue
 from gosdoc.core.storage import S3Storage, get_storage
+from gosdoc.docs_check.models import NpaEdition
+from gosdoc.docs_check.npa import queue_editions
 
 
 def _create_user(args: argparse.Namespace) -> int:
@@ -69,6 +72,35 @@ def _init_storage(timeout_s: float) -> int:
             time.sleep(3)
 
 
+def _reindex_npa(wait: bool, timeout_s: float) -> int:
+    """Полная переиндексация НПА — после подключения Elasticsearch или векторной базы."""
+    deadline = time.monotonic() + timeout_s
+    sessions = get_sessionmaker()
+    with sessions.begin() as db:
+        ids = queue_editions(db, full=True)
+    for edition_id in ids:  # после коммита: воркер должен увидеть статус queued
+        enqueue("npa", "index_npa_edition", edition_id)
+    print(f"В очередь поставлено редакций: {len(ids)}")
+    while wait:
+        with sessions() as db:
+            rows = db.execute(
+                select(NpaEdition.status, func.count())
+                .where(NpaEdition.id.in_(ids))
+                .group_by(NpaEdition.status)
+            )
+            counts = {status: n for status, n in rows}
+        print(", ".join(f"{k}: {v}" for k, v in sorted(counts.items())) or "нет редакций")
+        if not counts.get("queued"):
+            return 1 if counts.get("failed") else 0
+        if time.monotonic() > deadline:
+            # Редакция остаётся queued, если воркер не слушает очередь npa или задача
+            # снята по лимиту времени.
+            print("Индексация не завершилась за отведённое время", file=sys.stderr)
+            return 1
+        time.sleep(10)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="gosdoc")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -76,7 +108,8 @@ def main(argv: list[str] | None = None) -> int:
     w.add_argument("--timeout", type=float, default=300)
     w.add_argument(
         "--only",
-        help="через запятую: postgres,redis,rabbitmq,storage,elasticsearch,vector_store,llm",
+        help="через запятую: postgres,redis,rabbitmq,storage,llm, а также elasticsearch "
+        "и vector_store, если они настроены",
     )
     m = sub.add_parser("wait-migrations", help="ждать, пока схема БД дойдёт до версии образа")
     m.add_argument("--timeout", type=float, default=600)
@@ -84,6 +117,9 @@ def main(argv: list[str] | None = None) -> int:
     i.add_argument("--timeout", type=float, default=300)
     c = sub.add_parser("cleanup-files", help="удалить файлы с истёкшим сроком хранения")
     c.add_argument("--every", type=float, help="повторять каждые N секунд (без него — один раз)")
+    r = sub.add_parser("reindex-npa", help="переиндексировать всю нормативную базу")
+    r.add_argument("--wait", action="store_true", help="ждать завершения; код 1 при ошибках")
+    r.add_argument("--timeout", type=float, default=7200, help="предел ожидания, с")
     u = sub.add_parser("create-user", help="создать локального пользователя")
     u.add_argument("--login", required=True)
     u.add_argument("--full-name")
@@ -103,6 +139,8 @@ def main(argv: list[str] | None = None) -> int:
         return _init_storage(args.timeout)
     if args.cmd == "cleanup-files":
         return _cleanup_files(args.every)
+    if args.cmd == "reindex-npa":
+        return _reindex_npa(args.wait, args.timeout)
     return _create_user(args)
 
 

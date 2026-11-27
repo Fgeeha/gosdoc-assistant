@@ -192,10 +192,11 @@ def _prompt() -> dict[str, str]:
 def retrieve(
     backends: SearchBackends, organization_id: int, query: str, k: int = TOP_K
 ) -> list[int]:
-    text_ids = backends.text.search(query, organization_id, k * 2)
-    vector = backends.llm.embed([query])[0]
-    vector_ids = backends.vectors.search(vector, organization_id, k * 2)
-    return [int(i) for i in rrf([text_ids, vector_ids])[:k]]
+    rankings = [backends.text.search(query, organization_id, k * 2)]
+    if backends.vectors is not None:
+        vector = backends.llm.embed([query])[0]
+        rankings.append(backends.vectors.search(vector, organization_id, k * 2))
+    return [int(i) for i in rrf(rankings)[:k]]
 
 
 def _current_chunks(db: Session, ids: list[int], today: date) -> list[tuple[NpaChunk, NpaAct]]:

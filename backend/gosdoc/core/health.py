@@ -74,8 +74,9 @@ def _checks(s: Settings) -> dict[str, Callable[[], None]]:
         "redis": redis,
         "rabbitmq": rabbitmq,
         "storage": lambda: get_storage().ping(),
-        "elasticsearch": http(s.elasticsearch_url),
-        "vector_store": vector_store,
+        # Необязательные: без адреса сервис не используется и не проверяется.
+        **({"elasticsearch": http(s.elasticsearch_url)} if s.elasticsearch_url else {}),
+        **({"vector_store": vector_store} if s.vector_store_url else {}),
         "llm": http(s.llm_base_url.rstrip("/") + "/models", s.llm_api_key),
         **(
             {
@@ -101,6 +102,8 @@ def check_dependencies(s: Settings, only: set[str] | None = None) -> dict[str, s
         return "ok"
 
     checks = {k: v for k, v in _checks(s).items() if only is None or k in only}
+    if not checks:  # например, --only elasticsearch, когда сервис не настроен
+        return {}
     with ThreadPoolExecutor(len(checks)) as pool:
         results = dict(zip(checks, pool.map(run, checks.values()), strict=True))
     return results
