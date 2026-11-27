@@ -4,7 +4,8 @@
 #   REGISTRY, REGISTRY_USER, REGISTRY_PASSWORD — реестр образов в контуре
 #   PIP_INDEX_URL, NPM_REGISTRY                 — зеркала PyPI и npm
 #   BASE_IMAGE                                  — базовый образ (по умолчанию Astra Linux)
-#   CI_TOOLS_IMAGE                              — образ с uv, Node.js 20.19+/22.12+ и Docker CLI
+#   NODE_IMAGE                                  — образ Node.js 22 для сборки фронтенда (копия в реестре контура)
+#   CI_TOOLS_IMAGE                              — образ с uv, Node.js и Docker CLI
 #   IMAGE_SCANNER_CMD, ML_SCANNER_CMD           — команды сканера образов и Сканера безопасности ML
 #   KUBECONFIG_FILE, HELM_VALUES_FILE, K8S_NAMESPACE — выкатка (этап deploy)
 
@@ -17,6 +18,7 @@ stages:
 
 variables:
   BASE_IMAGE: registry.astralinux.ru/astra/ubi18
+  NODE_IMAGE: $REGISTRY/mirror/node:22-slim
   IMAGE_TAG: $CI_COMMIT_SHORT_SHA
   UV_INDEX_URL: $PIP_INDEX_URL
   # Пакеты ставит make install-ci из зеркала; uv run не должен досинхронизировать.
@@ -52,8 +54,7 @@ build:
   image: $CI_TOOLS_IMAGE
   scripts:
     - echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY" -u "$REGISTRY_USER" --password-stdin
-    # make images сначала собирает статику фронтенда на агенте (ADR-0007).
-    - make images BASE_IMAGE="$BASE_IMAGE" PIP_INDEX_URL="$PIP_INDEX_URL" NPM_REGISTRY="$NPM_REGISTRY" IMAGE_PREFIX="$REGISTRY/gosdoc/gosdoc" IMAGE_TAG="$IMAGE_TAG"
+    - make images BASE_IMAGE="$BASE_IMAGE" PIP_INDEX_URL="$PIP_INDEX_URL" NPM_REGISTRY="$NPM_REGISTRY" NODE_IMAGE="$NODE_IMAGE" IMAGE_PREFIX="$REGISTRY/gosdoc/gosdoc" IMAGE_TAG="$IMAGE_TAG"
     - for t in api worker frontend; do docker push "$REGISTRY/gosdoc/gosdoc-$t:$IMAGE_TAG"; done
 
 scan:
