@@ -11,13 +11,17 @@ DC_LOCAL := $(COMPOSE) --env-file .env -f deploy/docker-compose.dev.yml
 BASE_IMAGE ?= registry.astralinux.ru/astra/ubi18
 PIP_INDEX_URL ?= https://pypi.org/simple
 NPM_REGISTRY ?= https://registry.npmjs.org/
+# Образ с Node.js для сборки фронтенда в контейнере; пусто — npm с этой машины.
+NODE_IMAGE ?=
+NPM_BUILD := npm ci --registry $(NPM_REGISTRY) --no-audit --no-fund && npm run build
 IMAGE_PREFIX ?= gosdoc
 IMAGE_TAG ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 CHART := deploy/helm/gosdoc
 HELM ?= docker run --rm -v $(CURDIR)/$(CHART):/chart alpine/helm:3.16.4
 
 .PHONY: help install install-ci run run-worker run-mock-llm run-frontend lint format test \
-        test-unit check migrate helm-lint migration up-local down-local logs-local images clean
+        test-unit check migrate helm-lint migration frontend-dist up-local down-local \
+        logs-local images clean
 
 help: ## Показать список целей
 	@grep -hE '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) \
@@ -82,7 +86,18 @@ migration: ## Создать миграцию: make migration m="описани�
 # --- Docker ------------------------------------------------------------------
 # --env-file .env обязателен: без него Compose ищет .env рядом с compose-файлом.
 
-up-local: ## Поднять всё локально одной командой (http://localhost:8080)
+# Статика собирается на машине сборки, а не в образе: Node.js из пакетов ОС
+# базового образа старше, чем нужно Vite (ADR-0007). Нужен Node.js 20.19+ или
+# 22.12+; если на машине его нет — NODE_IMAGE=node:22-slim соберёт в контейнере.
+frontend-dist: ## Собрать статику фронтенда в frontend/dist (NODE_IMAGE=... — в контейнере)
+ifeq ($(NODE_IMAGE),)
+	cd frontend && $(NPM_BUILD)
+else
+	docker run --rm -u $$(id -u):$$(id -g) -e npm_config_cache=/tmp/npm \
+	  -v $(CURDIR)/frontend:/src -w /src $(NODE_IMAGE) sh -c '$(NPM_BUILD)'
+endif
+
+up-local: frontend-dist ## Поднять всё локально одной командой (http://localhost:8080)
 	@test -f .env || { cp .env.example .env; echo "Создан .env из .env.example — смените пароли"; }
 	$(DC_LOCAL) up -d --build --wait
 
@@ -92,11 +107,10 @@ down-local: ## Остановить локальное окружение
 logs-local: ## Логи локального окружения
 	$(DC_LOCAL) logs -f --tail=100
 
-images: ## Собрать прод-образы (BASE_IMAGE=... для РЕД ОС)
+images: frontend-dist ## Собрать прод-образы (BASE_IMAGE=... для РЕД ОС)
 	for t in api worker frontend; do \
 	  docker build -f deploy/docker/Dockerfile --target $$t \
 	    --build-arg BASE_IMAGE=$(BASE_IMAGE) --build-arg PIP_INDEX_URL=$(PIP_INDEX_URL) \
-	    --build-arg NPM_REGISTRY=$(NPM_REGISTRY) \
 	    -t $(IMAGE_PREFIX)-$$t:$(IMAGE_TAG) . || exit 1; \
 	done
 

@@ -4,7 +4,7 @@
 #   REGISTRY, REGISTRY_USER, REGISTRY_PASSWORD — реестр образов в контуре
 #   PIP_INDEX_URL, NPM_REGISTRY                 — зеркала PyPI и npm
 #   BASE_IMAGE                                  — базовый образ (по умолчанию Astra Linux)
-#   CI_TOOLS_IMAGE                              — образ с uv, Node.js и Docker CLI
+#   CI_TOOLS_IMAGE                              — образ с uv, Node.js 20.19+/22.12+ и Docker CLI
 #   IMAGE_SCANNER_CMD, ML_SCANNER_CMD           — команды сканера образов и Сканера безопасности ML
 #   KUBECONFIG_FILE, HELM_VALUES_FILE, K8S_NAMESPACE — выкатка (этап deploy)
 
@@ -52,6 +52,7 @@ build:
   image: $CI_TOOLS_IMAGE
   scripts:
     - echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY" -u "$REGISTRY_USER" --password-stdin
+    # make images сначала собирает статику фронтенда на агенте (ADR-0007).
     - make images BASE_IMAGE="$BASE_IMAGE" PIP_INDEX_URL="$PIP_INDEX_URL" NPM_REGISTRY="$NPM_REGISTRY" IMAGE_PREFIX="$REGISTRY/gosdoc/gosdoc" IMAGE_TAG="$IMAGE_TAG"
     - for t in api worker frontend; do docker push "$REGISTRY/gosdoc/gosdoc-$t:$IMAGE_TAG"; done
 
