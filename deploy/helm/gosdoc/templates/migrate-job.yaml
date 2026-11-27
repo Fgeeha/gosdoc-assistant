@@ -14,7 +14,11 @@ spec:
   template:
     metadata:
       labels: {{- include "gosdoc.selector" (dict "root" . "component" "migrate") | nindent 8 }}
+      {{- with include "gosdoc.podAnnotations" (dict "root" . "extra" .Values.migrations.podAnnotations) }}
+      annotations: {{- . | nindent 8 }}
+      {{- end }}
     spec:
+      {{- include "gosdoc.serviceAccount" . | nindent 6 }}
       {{- include "gosdoc.pod" . | nindent 6 }}
       restartPolicy: OnFailure
       containers:
@@ -25,7 +29,7 @@ spec:
             - sh
             - -c
             - >-
-              gosdoc wait-deps --only postgres --timeout {{ .Values.waitDeps.timeoutSeconds }} &&
+              {{ include "gosdoc.envFileSource" . }}gosdoc wait-deps --only postgres --timeout {{ .Values.waitDeps.timeoutSeconds }} &&
               {{- if .Values.migrations.initStorage }} gosdoc init-storage --timeout 120 && {{- end }}
               alembic upgrade head
               {{- if .Values.migrations.createAdmin }} &&

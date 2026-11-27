@@ -19,7 +19,7 @@ data:
   # Копия deploy/docker/nginx.conf (сверяется тестом), адрес API — сервис релиза.
   nginx.conf: |
     {{- .Files.Get "files/nginx.conf" | replace "http://api:8000" (printf "http://%s-api:8000" (include "gosdoc.fullname" .)) | nindent 4 }}
-{{- if not .Values.existingSecret }}
+{{- if not (or .Values.existingSecret .Values.openbao.enabled) }}
 ---
 apiVersion: v1
 kind: Secret
@@ -32,4 +32,18 @@ stringData:
   {{- range $k, $v := omit .Values.secret "DATABASE_URL" }}
   {{ $k }}: {{ $v | toString | quote }}
   {{- end }}
+{{- end }}
+{{- if .Values.openbao.enabled }}
+{{- if and .Values.secret (not .Values.existingSecret) }}
+{{- fail "openbao.enabled: значения secret.* не используются — уберите их или задайте existingSecret" }}
+{{- end }}
+{{- if not .Values.podAnnotations }}
+{{- fail "openbao.enabled: задайте аннотации агента в podAnnotations (пример — values-example.yaml)" }}
+{{- end }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "gosdoc.fullname" . }}
+  labels: {{- include "gosdoc.labels" . | nindent 4 }}
 {{- end }}

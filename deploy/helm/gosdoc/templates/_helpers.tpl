@@ -29,7 +29,9 @@ app.kubernetes.io/component: {{ .component }}
 {{- define "gosdoc.env" -}}
 envFrom:
   - configMapRef: {name: {{ include "gosdoc.fullname" . }}-config}
+{{- if or .Values.existingSecret (not .Values.openbao.enabled) }}
   - secretRef: {name: {{ include "gosdoc.secretName" . }}}
+{{- end }}
 {{- if or .Values.caBundle.secretName .Values.caBundle.configMapName }}
 env:
   - name: CA_BUNDLE
@@ -57,8 +59,36 @@ volumeMounts:
 {{- end }}
 {{- end -}}
 
-{{- define "gosdoc.pod" -}}
+{{/* OpenBao: агент пишет файл с переменными окружения, контейнер читает его
+     перед запуском. Команда-обёртка для контейнеров с args. */}}
+{{- define "gosdoc.envFileCommand" -}}
+{{- if .Values.openbao.enabled -}}
+command: ["sh", "-c", "set -a; . \"$0\"; set +a; exec \"$@\"", {{ .Values.openbao.envFile | quote }}]
+{{- end -}}
+{{- end -}}
+
+{{/* То же — префикс для команд, которые уже запускаются через sh -c. */}}
+{{- define "gosdoc.envFileSource" -}}
+{{- if .Values.openbao.enabled }}set -a; . {{ .Values.openbao.envFile | squote }}; set +a; {{ end }}
+{{- end -}}
+
+{{/* Аннотации подов приложения (api, воркеры, миграции); .extra — поверх общих. */}}
+{{- define "gosdoc.podAnnotations" -}}
+{{- with merge (dict) (.extra | default dict) .root.Values.podAnnotations }}
+{{- toYaml . }}
+{{- end }}
+{{- end -}}
+
+{{/* Токен ServiceAccount нужен только агенту OpenBao (вход через Kubernetes auth). */}}
+{{- define "gosdoc.serviceAccount" -}}
+{{- if .Values.openbao.enabled -}}
+serviceAccountName: {{ include "gosdoc.fullname" . }}
+{{- else -}}
 automountServiceAccountToken: false
+{{- end -}}
+{{- end -}}
+
+{{- define "gosdoc.pod" -}}
 securityContext: {{- toYaml .Values.podSecurityContext | nindent 2 }}
 {{- with .Values.image.pullSecrets }}
 imagePullSecrets: {{- toYaml . | nindent 2 }}
@@ -79,7 +109,7 @@ affinity: {{- toYaml . | nindent 2 }}
 - name: wait-deps
   image: {{ include "gosdoc.image" (dict "root" .root "name" "api") }}
   imagePullPolicy: {{ .root.Values.image.pullPolicy }}
-  command: ["sh", "-c", "gosdoc wait-deps --only {{ .deps }} --timeout {{ .root.Values.waitDeps.timeoutSeconds }}{{ if .migrations }} && gosdoc wait-migrations --timeout 900{{ end }}"]
+  command: ["sh", "-c", "{{ include "gosdoc.envFileSource" .root }}gosdoc wait-deps --only {{ .deps }} --timeout {{ .root.Values.waitDeps.timeoutSeconds }}{{ if .migrations }} && gosdoc wait-migrations --timeout 900{{ end }}"]
   {{- include "gosdoc.env" .root | nindent 2 }}
   {{- include "gosdoc.mounts" .root | nindent 2 }}
   securityContext: {{- toYaml .root.Values.containerSecurityContext | nindent 4 }}

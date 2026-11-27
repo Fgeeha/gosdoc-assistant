@@ -64,6 +64,18 @@ Secret (например `gosdoc-secret`) с ключами:
 Inference, Elasticsearch, Milvus, LDAP, MLFlow; к PostgreSQL — через
 `sslrootcert` в `DATABASE_URL`.
 
+Секреты из OpenBao (agent injector) — вместо `existingSecret`:
+`openbao.enabled: true` и аннотации агента в `podAnnotations` (роль, путь
+секрета, шаблон файла; для Job миграций — `migrations.podAnnotations` с
+`agent-pre-populate-only`). Агент пишет файл `openbao.envFile`
+(`/vault/secrets/.env`, строки `KEY='значение'`), контейнеры api, воркеров и
+Job миграций читают его перед запуском; без файла контейнер не стартует.
+Роль OpenBao привязывается к ServiceAccount с именем релиза. Подам нужна
+аннотация `agent-init-first`: секреты читает уже initContainer. Файл читает
+shell, поэтому значения — в одинарных кавычках с экранированием (см. шаблон
+в `values-example.yaml`). Секреты читаются один раз при старте: после смены
+значения в OpenBao перезапустите поды (`kubectl rollout restart`).
+
 ### 2.3 RabbitMQ
 
 Вся настройка брокера — один ключ `RABBITMQ_URL`:

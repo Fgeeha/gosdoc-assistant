@@ -351,7 +351,9 @@ flowchart LR
 - **Helm (ADR-0009) — `deploy/helm/gosdoc`:** только приложение: api,
   воркеры (группы очередей — отдельные Deployment), frontend/nginx, Job
   миграций Alembic. Адреса сервисов — `config` (ConfigMap), пароли —
-  `existingSecret`. CA-бандл монтируется из Secret/ConfigMap, путь — в
+  `existingSecret` либо OpenBao (`openbao.enabled`: агент по
+  `podAnnotations` пишет `.env`, контейнеры читают его перед запуском).
+  CA-бандл монтируется из Secret/ConfigMap, путь — в
   `CA_BUNDLE`. Job миграций — обычный ресурс с номером ревизии в имени (не
   hook: ConfigMap и Secret к его запуску уже созданы); api и воркеры в
   initContainer ждут нужных зависимостей (`gosdoc wait-deps --only …`) и

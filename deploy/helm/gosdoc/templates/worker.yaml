@@ -15,7 +15,9 @@ spec:
       labels: {{- include "gosdoc.selector" (dict "root" $ "component" (printf "worker-%s" $g.name)) | nindent 8 }}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/config.yaml") $ | sha256sum }}
+        {{- with include "gosdoc.podAnnotations" (dict "root" $) }}{{ . | nindent 8 }}{{ end }}
     spec:
+      {{- include "gosdoc.serviceAccount" $ | nindent 6 }}
       {{- include "gosdoc.pod" $ | nindent 6 }}
       initContainers:
         {{- include "gosdoc.waitInit" (dict "root" $ "deps" "postgres,rabbitmq,storage" "migrations" true) | nindent 8 }}
@@ -25,6 +27,7 @@ spec:
         - name: worker
           image: {{ include "gosdoc.image" (dict "root" $ "name" "worker") }}
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          {{- with include "gosdoc.envFileCommand" $ }}{{ . | nindent 10 }}{{ end }}
           args: {{ concat (list "dramatiq" "workers.actors" "--processes" (toString $g.processes) "--threads" (toString $g.threads) "--queues") $g.queues | toJson }}
           {{- include "gosdoc.env" $ | nindent 10 }}
           {{- include "gosdoc.mounts" $ | nindent 10 }}

@@ -20,3 +20,20 @@ config:
 ingress:
   host: gosdoc.fgau.local
   tlsSecretName: gosdoc-tls
+
+# Вариант с OpenBao вместо existingSecret (agent injector). Префикс аннотаций
+# и имя файла (.env — по суффиксу аннотации) зависят от установки injector.
+# openbao:
+#   enabled: true
+# podAnnotations:
+#   vault.hashicorp.com/agent-inject: "true"
+#   vault.hashicorp.com/role: gosdoc
+#   vault.hashicorp.com/agent-init-first: "true"      # секреты нужны initContainer
+#   vault.hashicorp.com/agent-inject-secret-.env: secret/data/gosdoc
+#   vault.hashicorp.com/agent-inject-template-.env: |
+#     {{- with secret "secret/data/gosdoc" }}{{- range $k, $v := .Data.data }}
+#     {{ $k }}='{{ $v | replaceAll "'" "'\\''" }}'
+#     {{- end }}{{- end }}
+# migrations:
+#   podAnnotations:
+#     vault.hashicorp.com/agent-pre-populate-only: "true"   # без sidecar, иначе Job не завершится
