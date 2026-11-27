@@ -4,22 +4,38 @@ API ставит задачу по имени актора и не импорт�
 образе воркера. Брокер создаётся лениво, соединение открывается при отправке.
 """
 
+import ssl
 from collections.abc import Callable, Iterable
 from functools import lru_cache
 
 import dramatiq
+import pika
 from dramatiq.brokers.rabbitmq import RabbitmqBroker
 from sqlalchemy import event
 from sqlalchemy.orm import Session
 
-from gosdoc.core.config import get_settings
+from gosdoc.core.config import Settings, get_settings
 
 Enqueue = Callable[[str, str, int], None]
 
 
+def amqp_ssl_options(s: Settings) -> pika.SSLOptions | None:
+    """TLS по CA_BUNDLE; без него pika сверяет сертификат с системными CA образа."""
+    if s.rabbitmq_url.startswith("amqps") and s.ca_bundle:
+        return pika.SSLOptions(ssl.create_default_context(cafile=s.ca_bundle))
+    return None
+
+
 @lru_cache
 def get_broker() -> RabbitmqBroker:
-    return RabbitmqBroker(url=get_settings().rabbitmq_url)
+    s = get_settings()
+    broker = RabbitmqBroker(url=s.rabbitmq_url)
+    if (tls := amqp_ssl_options(s)) is not None:
+        # Несколько узлов через «;» в URL dramatiq разбирает в список параметров.
+        params = broker.parameters
+        for p in params if isinstance(params, list) else [params]:
+            p.ssl_options = tls
+    return broker
 
 
 def enqueue(queue: str, actor: str, job_id: int) -> None:

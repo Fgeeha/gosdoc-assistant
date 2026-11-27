@@ -16,3 +16,4 @@ frontend/dist/
 .claude/
 .claude-flow/
 requirements-ci.txt
+.serena/

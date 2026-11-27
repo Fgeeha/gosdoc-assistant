@@ -1,7 +1,6 @@
 """Проверка доступности зависимостей: readiness и ожидание на старте (initContainer)."""
 
 import logging
-import ssl
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -13,6 +12,7 @@ from sqlalchemy import text
 from gosdoc.core.auth import get_redis
 from gosdoc.core.config import Settings
 from gosdoc.core.db import get_engine
+from gosdoc.core.queue import amqp_ssl_options
 from gosdoc.core.storage import get_storage
 
 log = logging.getLogger(__name__)
@@ -34,8 +34,8 @@ def _checks(s: Settings) -> dict[str, Callable[[], None]]:
     def rabbitmq() -> None:
         params = pika.URLParameters(s.rabbitmq_url)
         params.socket_timeout = params.blocked_connection_timeout = s.deps_check_timeout_s
-        if s.rabbitmq_url.startswith("amqps") and s.ca_bundle:
-            params.ssl_options = pika.SSLOptions(ssl.create_default_context(cafile=s.ca_bundle))
+        if (tls := amqp_ssl_options(s)) is not None:
+            params.ssl_options = tls
         pika.BlockingConnection(params).close()
 
     def http(url: str, token: str | None = None) -> Callable[[], None]:

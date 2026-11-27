@@ -55,11 +55,47 @@ Secret (например `gosdoc-secret`) с ключами:
 
 Корневой CA — ConfigMap или Secret (ключ `ca.pem`), указывается в
 `caBundle.configMapName` или `caBundle.secretName`. Путь передаётся
-приложению в `CA_BUNDLE` и используется для TLS к S3, Inference,
-Elasticsearch, Milvus, LDAP, MLFlow; к PostgreSQL — через `sslrootcert` в
-`DATABASE_URL`.
+приложению в `CA_BUNDLE` и используется для TLS к RabbitMQ (`amqps`), S3,
+Inference, Elasticsearch, Milvus, LDAP, MLFlow; к PostgreSQL — через
+`sslrootcert` в `DATABASE_URL`.
 
-### 2.3 Helm
+### 2.3 RabbitMQ
+
+Вся настройка брокера — один ключ `RABBITMQ_URL`:
+`amqps://user:pass@mq.<домен>:5671/<vhost>`. Очереди, exchange и привязки
+вручную создавать не нужно: воркер при старте сам объявляет durable-очереди
+`tables`, `letters`, `docs_check`, `npa`, `maintenance` и к каждой служебные
+`<имя>.DQ` (отложенные сообщения) и `<имя>.XQ` (необработанные, хранятся
+7 дней) — всего 15 очередей на стандартном exchange. API объявляет очередь
+при первой постановке задачи в неё, если воркер ещё не запускался.
+
+На стороне RabbitMQ нужны:
+
+1. Отдельный vhost под систему. Общий vhost `/`, где работают другие
+   системы, не использовать.
+2. Пользователь без тегов (`administrator`, `policymaker` и т. п. не нужны) с
+   правами `configure`, `write`, `read` на этот vhost:
+
+   ```bash
+   rabbitmqctl add_vhost gosdoc
+   rabbitmqctl add_user gosdoc '<пароль>'
+   rabbitmqctl set_permissions -p gosdoc gosdoc '.*' '.*' '.*'
+   ```
+
+   Без `configure` очереди не создаются и фоновые задачи не выполняются.
+   Сужать права до имён очередей не рекомендуется: новая очередь в следующей
+   версии останется без прав.
+3. По желанию — лимиты на vhost, чтобы он не мог занять ресурсы общего
+   сервера: `rabbitmqctl set_vhost_limits -p gosdoc '{"max-queues": 30}'`.
+
+Права действуют только внутри vhost: очереди и сообщения других систем
+пользователю недоступны. В сообщении передаётся только номер задачи, файлы
+идут через S3, поэтому объём очередей мал.
+
+Проверка: `rabbitmq` в ответе `/health/ready`; после запуска воркера очереди
+видны в `rabbitmqctl list_queues -p gosdoc`.
+
+### 2.4 Helm
 
 ```bash
 helm upgrade --install gosdoc deploy/helm/gosdoc -n gosdoc -f values.yaml
@@ -76,7 +112,7 @@ Job миграций (ждёт PostgreSQL, создаёт бакет, приме
 По умолчанию все обрабатывает одна группа; тяжёлые (`docs_check`, `npa`)
 можно вынести в отдельную группу `worker.groups` со своим числом реплик.
 
-### 2.4 Airflow
+### 2.5 Airflow
 
 Скопируйте `airflow/dags/*.py` в каталог DAG заказанного Airflow и задайте
 Variables: `gosdoc_api_url` (адрес ingress), `gosdoc_service_token`
