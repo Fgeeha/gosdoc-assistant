@@ -39,6 +39,13 @@ make images BASE_IMAGE=registry.astralinux.ru/astra/ubi18 \
   IMAGE_PREFIX=<реестр>/gosdoc/gosdoc IMAGE_TAG=1.0.0
 ```
 
+Перед сборкой образов `make images` собирает статику фронтенда на машине
+сборки (`make frontend-dist`), поэтому на ней нужен Node.js 20.19+ или 22.12+;
+Node.js из пакетов Astra Linux (18.19) не подходит. Если подходящего Node.js
+нет, добавьте `NODE_IMAGE=<образ с Node.js>` (например `node:22-slim` или его
+копия в реестре контура) — статика соберётся в контейнере. То же для локального
+запуска: `make up-local NODE_IMAGE=node:22-slim`.
+
 Для РЕД ОС — `BASE_IMAGE=registry.red-soft.ru/ubi8/ubi`. Если нужного пакета
 нет в репозитории ОС, сборка останавливается с сообщением о пакете — базовый
 образ не подменяется (ADR-0007). Python-зависимости ставятся из зеркала по

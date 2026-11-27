@@ -1,7 +1,7 @@
 #!/bin/sh
 # Установка пакетов ОС для Astra Linux (apt) и РЕД ОС (dnf) по логическим группам.
 # Если пакета нет в репозитории ОС, сборка падает с явным сообщением (ADR-0007).
-# Использование: os-packages.sh python | worker | node | nginx
+# Использование: os-packages.sh python | worker | nginx
 set -eu
 
 if command -v apt-get >/dev/null 2>&1; then
@@ -19,8 +19,6 @@ pkgs() {
         dnf:python) echo "python3 ca-certificates shadow-utils" ;;
         apt:worker) echo "tesseract-ocr tesseract-ocr-rus libreoffice-writer fonts-liberation2" ;;
         dnf:worker) echo "tesseract tesseract-langpack-rus libreoffice-writer libreoffice-headless liberation-fonts" ;;
-        apt:node)   echo "nodejs npm" ;;
-        dnf:node)   echo "nodejs npm" ;;
         apt:nginx)  echo "nginx" ;;
         dnf:nginx)  echo "nginx" ;;
         *) echo "os-packages.sh: неизвестная группа $1" >&2; exit 1 ;;

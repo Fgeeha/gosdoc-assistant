@@ -62,7 +62,8 @@ DOCX, ODT, PDF, сканы (OCR), TXT.
 
 ## Быстрый старт
 
-Нужны Docker с Compose v2 и `make`.
+Нужны Docker с Compose v2, `make` и Node.js 20.19+ или 22.12+ для сборки
+фронтенда (нет Node.js — `make up-local NODE_IMAGE=node:22-slim`).
 
 ```sh
 git clone git@github.com:Fgeeha/gosdoc-assistant.git && cd gosdoc-assistant

@@ -53,23 +53,16 @@ USER 10001
 ENV HOME=/tmp
 CMD ["dramatiq", "workers.actors", "--processes", "2", "--threads", "4"]
 
-# --- Фронтенд: сборка Node.js из пакетов ОС, раздача nginx из пакетов ОС ---
-FROM ${BASE_IMAGE} AS frontend-build
-COPY --chmod=755 deploy/docker/os-packages.sh /usr/local/bin/os-packages.sh
-RUN os-packages.sh node
-ARG NPM_REGISTRY=https://registry.npmjs.org/
-WORKDIR /src
-COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci --registry "${NPM_REGISTRY}" --no-audit --no-fund
-COPY frontend ./
-RUN npm run build
-
+# --- Фронтенд: готовая статика, раздача nginx из пакетов ОС ------------------
+# Статика собирается до сборки образа (make frontend-dist): Node.js в пакетах
+# ОС старше, чем нужно сборщику (ADR-0007). Без frontend/dist сборка упадёт
+# на COPY — сначала выполните make frontend-dist.
 FROM ${BASE_IMAGE} AS frontend
 COPY --chmod=755 deploy/docker/os-packages.sh /usr/local/bin/os-packages.sh
 RUN os-packages.sh nginx && rm -f /etc/nginx/sites-enabled/default /etc/nginx/conf.d/default.conf \
     && useradd --system --uid 10001 --home-dir /usr/share/gosdoc gosdoc
 COPY deploy/docker/nginx.conf /etc/nginx/nginx.conf
-COPY --from=frontend-build /src/dist /usr/share/gosdoc
+COPY frontend/dist /usr/share/gosdoc
 USER 10001
 EXPOSE 8080
 # -e: журнал ошибок в stderr с самого старта (до чтения конфигурации).
