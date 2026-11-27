@@ -190,3 +190,34 @@ def test_pdf_via_worker(letters_client: TestClient, make_user: MakeUser) -> None
     assert job["status"] == "done", job
     pdf = c.get(f"/api/files/{job['result']['pdf_file_id']}/content").content
     assert pdf.startswith(b"%PDF")
+
+
+def test_sandbox_does_not_save(
+    letters_client: TestClient, make_user: MakeUser, prompts: list[str]
+) -> None:
+    c = letters_client
+    login(c, make_user().login)
+    r = c.post(
+        "/api/letters/sandbox",
+        json={
+            "type": "citizen_reply",
+            "description": "Сообщить сроки ремонта",
+            "incoming_text": "Прошу отремонтировать дорогу по ул. Садовой",
+            "requisites": {"incoming_date": "2026-10-12"},
+        },
+    )
+    assert r.status_code == 200, r.text
+    result = r.json()
+    assert result["body"]["title"] == DRAFT["title"]
+    assert result["checks"]["deadline"]  # срок по 59-ФЗ посчитан
+    assert "дорогу по ул. Садовой" in prompts[0]  # вставленный текст дошёл до модели
+    assert c.get("/api/letters").json() == []
+
+    r = c.post(
+        "/api/letters/sandbox/docx",
+        json={"type": "citizen_reply", "body": result["body"], "addressee": "Петрову П.П."},
+    )
+    assert r.status_code == 200, r.text
+    text = "\n".join(p.text for p in Document(io.BytesIO(r.content)).paragraphs)
+    assert "Ремонт будет выполнен в ближайшее время." in text
+    assert c.post("/api/letters/sandbox/docx", json={"type": "x", "body": {}}).status_code == 422

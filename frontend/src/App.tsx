@@ -10,6 +10,7 @@ import ChecksPage from "./pages/docs/ChecksPage";
 import NpaPage from "./pages/docs/NpaPage";
 import LetterEditor from "./pages/letters/LetterEditor";
 import LettersPage from "./pages/letters/LettersPage";
+import SandboxPage from "./pages/letters/SandboxPage";
 import OrganizationPage from "./pages/OrganizationPage";
 import TablesPage from "./pages/tables/TablesPage";
 import UsersPage from "./pages/UsersPage";
@@ -34,6 +35,7 @@ export default function App() {
     { key: "/", label: <Link to="/">Главная</Link> },
     { key: "/check", label: <Link to="/check">Проверка</Link> },
     { key: "/letters", label: <Link to="/letters">Письма</Link> },
+    { key: "/letters-sandbox", label: <Link to="/letters-sandbox">Тест писем</Link> },
     { key: "/tables", label: <Link to="/tables">Таблицы</Link> },
     { key: "/npa", label: <Link to="/npa">Нормативная база</Link> },
     ...(isAdmin
@@ -69,6 +71,7 @@ export default function App() {
           <Route path="/npa" element={<NpaPage me={me} />} />
           <Route path="/letters" element={<LettersPage />} />
           <Route path="/letters/:id" element={<LetterEditor me={me} />} />
+          <Route path="/letters-sandbox" element={<SandboxPage />} />
           <Route path="/password" element={<ChangePasswordPage onDone={() => setMe(null)} />} />
           {isAdmin && <Route path="/admin/users" element={<UsersPage me={me} />} />}
           {isAdmin && <Route path="/admin/audit" element={<AuditPage />} />}

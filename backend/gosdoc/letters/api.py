@@ -1,9 +1,11 @@
 """API модуля 2: письма, версии, проверки, DOCX/PDF, бланки."""
 
+import dataclasses
 import datetime as dt
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import Response
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -110,6 +112,21 @@ class LetterDetail(LetterOut):
     checks: dict[str, Any]
 
 
+class SandboxIn(LetterCreate):
+    incoming_text: str = Field(default="", max_length=50000)  # вместо файла — вставить текст
+    outgoing_number: str = Field(default="", max_length=100)
+    date: dt.date | None = None
+
+
+class SandboxDocx(LetterUpdate):
+    type: str
+
+    @field_validator("type")
+    @classmethod
+    def _known_type(cls, v: str) -> str:
+        return LetterCreate._known_type(v)
+
+
 class BlankOut(BaseModel):
     id: int
     name: str
@@ -159,6 +176,30 @@ def _check_blank(db: Session, user: User, blank_id: int | None) -> None:
         raise HTTPException(404, "Бланк не найден")
 
 
+def _incoming_text(db: Session, user: User, storage: FileStorage, file_id: int | None) -> str:
+    if file_id is None:
+        return ""
+    f = readable_file(db, user, file_id)
+    try:
+        return extract_text(storage.get(f.storage_key), f.original_name)
+    except TextExtractionError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+def _transient(user: User, letter_type: str, body: "SandboxDocx | SandboxIn") -> Letter:
+    """Письмо вне сессии БД: те же расчёты и проверки, что у настоящего, без сохранения."""
+    return Letter(
+        organization_id=user.organization_id,
+        type=letter_type,
+        blank_id=body.blank_id,
+        addressee=body.addressee,
+        executor=body.executor or user.full_name,
+        outgoing_number=body.outgoing_number.strip() or None,
+        date=body.date,
+        requisites=body.requisites.model_dump(mode="json"),
+    )
+
+
 def _detail(db: Session, letter: Letter) -> LetterDetail:
     versions = _versions(db, letter.id)
     checks = service.run_checks(
@@ -194,13 +235,7 @@ def create_letter(
     llm: LLMClient = Depends(get_llm),
 ) -> LetterDetail:
     _check_blank(db, user, body.blank_id)
-    incoming = ""
-    if body.incoming_file_id is not None:
-        f = readable_file(db, user, body.incoming_file_id)
-        try:
-            incoming = extract_text(storage.get(f.storage_key), f.original_name)
-        except TextExtractionError as e:
-            raise HTTPException(400, str(e)) from e
+    incoming = _incoming_text(db, user, storage, body.incoming_file_id)
     requisites = body.requisites.model_dump(mode="json")
     letter = OrgRepository(Letter, db, user.organization_id).add(
         Letter(
@@ -229,6 +264,46 @@ def create_letter(
         details={"type": body.type, **meta},
     )
     return _detail(db, letter)
+
+
+# Песочница: проверить генерацию и оформление, ничего не сохраняя. Маршруты стоят до
+# /{letter_id}, иначе "sandbox" разбирался бы как номер письма.
+
+
+@router.post("/sandbox")
+def sandbox(
+    body: SandboxIn,
+    request: Request,
+    db: Session = Depends(get_db, scope="function"),
+    user: User = Depends(current_user),
+    storage: FileStorage = Depends(get_storage),
+    llm: LLMClient = Depends(get_llm),
+) -> dict[str, Any]:
+    _check_blank(db, user, body.blank_id)
+    incoming = body.incoming_text or _incoming_text(db, user, storage, body.incoming_file_id)
+    letter = _transient(user, body.type, body)
+    letter.deadline = service.compute_deadline(db, body.type, letter.requisites)
+    draft, meta = service.draft_body(llm, body.type, body.description, incoming)
+    checks = service.run_checks(letter, draft, service.org_settings(db, user.organization_id))
+    audit_request(db, request, user, "letters.sandbox", details={"type": body.type, **meta})
+    return {"body": draft, "meta": meta, "checks": dataclasses.asdict(checks)}
+
+
+@router.post("/sandbox/docx")
+def sandbox_docx(
+    body: SandboxDocx,
+    db: Session = Depends(get_db, scope="function"),
+    user: User = Depends(current_user),
+    storage: FileStorage = Depends(get_storage),
+) -> Response:
+    _check_blank(db, user, body.blank_id)
+    letter = _transient(user, body.type, body)
+    data = service.render_docx(db, storage, letter, LetterVersion(body=body.body.model_dump()))
+    return Response(
+        data,
+        media_type=service.DOCX_MIME,
+        headers={"Content-Disposition": "attachment; filename*=UTF-8''sandbox.docx"},
+    )
 
 
 @router.get("", response_model=list[LetterOut])
