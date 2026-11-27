@@ -24,9 +24,11 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://gosdoc:gosdoc@localhost:5432/gosdoc"
     redis_url: str = "redis://localhost:6379/0"
     rabbitmq_url: str = "amqp://gosdoc:gosdoc@localhost:5672/"
-    elasticsearch_url: str = "http://localhost:9200"
+    # Поиск по НПА. Оба сервиса необязательны: без ELASTICSEARCH_URL полнотекстовый
+    # поиск идёт в PostgreSQL, без VECTOR_STORE_URL векторный поиск отключён.
+    elasticsearch_url: str = ""
     vector_store: Literal["chroma", "milvus"] = "chroma"
-    vector_store_url: str = "http://localhost:8001"
+    vector_store_url: str = ""
 
     storage_backend: Literal["s3", "postgres", "local"] = "s3"
     storage_max_file_mb: int = 50

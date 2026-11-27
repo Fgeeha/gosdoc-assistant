@@ -3,8 +3,8 @@
 import datetime as dt
 from typing import Any
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text, func
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import Computed, Date, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column
 
 from gosdoc.core.db import Base
@@ -55,6 +55,10 @@ class NpaChunk(Base):
     article: Mapped[str] = mapped_column(String(20), default="")
     heading: Mapped[str] = mapped_column(Text, default="")
     text: Mapped[str] = mapped_column(Text)
+    # Для поиска без Elasticsearch (PgTextIndex); заполняет сама БД.
+    tsv: Mapped[Any] = mapped_column(
+        TSVECTOR, Computed("to_tsvector('russian', text)", persisted=True), deferred=True
+    )
 
 
 class NpaChangeLog(Base):

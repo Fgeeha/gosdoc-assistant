@@ -17,7 +17,8 @@ from gosdoc.core.config import get_settings
 from gosdoc.core.db import Job, get_db
 from gosdoc.core.mlflow import MlflowClient, collect_prompts
 from gosdoc.core.queue import Enqueue, enqueue_after_commit, get_enqueue
-from gosdoc.docs_check.models import CheckReport, Finding, NpaEdition
+from gosdoc.docs_check.models import CheckReport, Finding
+from gosdoc.docs_check.npa import queue_editions
 
 router = APIRouter(prefix="/api/internal", tags=["internal"], include_in_schema=False)
 
@@ -42,12 +43,9 @@ def reindex_npa(
     enqueue: Enqueue = Depends(get_enqueue),
 ) -> dict[str, int]:
     """Повтор не завершённых индексаций; full=true — переиндексация всей базы."""
-    stmt = select(NpaEdition) if full else select(NpaEdition).where(NpaEdition.status != "indexed")
-    editions = list(db.scalars(stmt))
-    for e in editions:
-        e.status = "queued"
-    enqueue_after_commit(db, enqueue, "npa", "index_npa_edition", [e.id for e in editions])
-    return {"queued": len(editions)}
+    ids = queue_editions(db, full)
+    enqueue_after_commit(db, enqueue, "npa", "index_npa_edition", ids)
+    return {"queued": len(ids)}
 
 
 @router.post("/mlflow/sync-prompts", dependencies=[Depends(service_auth)])

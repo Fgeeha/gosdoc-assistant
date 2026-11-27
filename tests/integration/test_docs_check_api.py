@@ -6,14 +6,16 @@ from pathlib import Path
 import pytest
 from docx import Document
 from fastapi.testclient import TestClient
+from gosdoc import cli
 from gosdoc.core.config import get_settings
 from gosdoc.core.queue import get_enqueue
 from gosdoc.core.storage import get_storage
+from gosdoc.docs_check.npa import PgTextIndex, SearchBackends
 from gosdoc.docs_check.service import run_check_job, run_index_job
 from sqlalchemy.orm import Session, sessionmaker
 
 from tests.conftest import MakeUser, login
-from tests.npa_fakes import backends
+from tests.npa_fakes import backends, checking_model
 
 pytestmark = pytest.mark.integration
 NPA = Path(__file__).parent.parent / "fixtures" / "npa"
@@ -134,3 +136,45 @@ def test_outdated_reference_found_with_quote(
     login(c, make_user(org_id=org).login)  # чужой отчёт не виден
     assert c.get(f"/api/docs-check/jobs/{job['id']}/report").status_code == 404
     assert user.id != admin.id
+
+
+def test_check_without_elasticsearch_and_vector_store(
+    client: TestClient,
+    sessions: sessionmaker[Session],
+    make_user: MakeUser,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Без внешних индексов нормы ищутся в PostgreSQL, эмбеддинги не запрашиваются."""
+    prompts: list[str] = []
+    llm = checking_model(prompts, embeddings=False)
+    search = SearchBackends(PgTextIndex(sessions), None, llm)
+    storage = client.app.dependency_overrides[get_storage]()  # type: ignore[attr-defined]
+
+    def run_now(queue: str, actor: str, item_id: int) -> None:
+        run = run_index_job if actor == "index_npa_edition" else run_check_job
+        run(sessions, storage, search, get_settings(), item_id)
+
+    client.app.dependency_overrides[get_enqueue] = lambda: run_now  # type: ignore[attr-defined]
+    org = 2000
+    login(client, make_user(roles=["npa_admin", "user"], org_id=org).login)
+    assert all(x["ok"] for x in upload_npa(client, ["59-fz-2006.docx", "59-fz-2024.docx"]))
+    r = client.post(
+        "/api/files", files={"file": ("порядок.docx", (NPA / "checked-document.docx").read_bytes())}
+    )
+    job = client.post("/api/docs-check/jobs", json={"file_ids": [r.json()["id"]]}).json()[0]
+    report = client.get(f"/api/docs-check/jobs/{job['id']}/report")
+    assert report.status_code == 200, client.get("/api/docs-check/jobs").json()
+    content = [f for f in report.json()["findings"] if f["kind"] == "content"]
+    assert [f["quote"] for f in content] == [
+        "рассматривается в течение 30 дней со дня его регистрации"
+    ]
+    # Команда переиндексации (переход на Elasticsearch/Milvus и обратно): всё в очередь, ждёт итог.
+    monkeypatch.setattr("gosdoc.cli.enqueue", run_now)
+    cli.main(["reindex-npa", "--wait"])  # код возврата зависит от редакций других тестов
+    acts = [a for a in client.get("/api/npa/acts").json() if a["organization_id"] == org]
+    assert acts and all(e["status"] == "indexed" for a in acts for e in a["editions"])
+    # Морфология: слова запроса в других формах, чем в тексте нормы.
+    assert PgTextIndex(sessions).search("рассмотрение обращения", org, 5)
+    # Чужой организации ведомственные акты не находятся.
+    assert PgTextIndex(sessions).search("рассмотрение обращения в течение 30 дней", org, 5)
+    assert not PgTextIndex(sessions).search("рассмотрение обращения в течение 30 дней", org + 1, 5)

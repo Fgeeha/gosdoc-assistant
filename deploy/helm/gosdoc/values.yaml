@@ -24,8 +24,8 @@ config:
   SESSION_COOKIE_SECURE: "true"
   # Адреса сервисов (*.fgau.local) — задаются при установке:
   REDIS_URL: ""             # rediss://redis.<домен>:6380/0 (пароль — в Secret, если в URL)
-  ELASTICSEARCH_URL: ""
-  VECTOR_STORE_URL: ""
+  ELASTICSEARCH_URL: ""     # необязателен: пусто — полнотекстовый поиск по НПА в PostgreSQL
+  VECTOR_STORE_URL: ""      # необязателен: пусто — без векторного поиска (и без эмбеддингов)
   S3_ENDPOINT_URL: ""
   LLM_BASE_URL: ""
   EMBEDDINGS_BASE_URL: ""
