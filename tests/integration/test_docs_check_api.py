@@ -10,7 +10,9 @@ from gosdoc import cli
 from gosdoc.core.config import get_settings
 from gosdoc.core.queue import get_enqueue
 from gosdoc.core.storage import get_storage
-from gosdoc.docs_check.npa import PgTextIndex, SearchBackends
+from gosdoc.docs_check.models import NpaAct
+from gosdoc.docs_check.npa import PgTextIndex, SearchBackends, find_act
+from gosdoc.docs_check.npa_refs import canonical_key
 from gosdoc.docs_check.service import run_check_job, run_index_job
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -178,3 +180,32 @@ def test_check_without_elasticsearch_and_vector_store(
     # Чужой организации ведомственные акты не находятся.
     assert PgTextIndex(sessions).search("рассмотрение обращения в течение 30 дней", org, 5)
     assert not PgTextIndex(sessions).search("рассмотрение обращения в течение 30 дней", org + 1, 5)
+
+
+def test_same_law_number_in_different_years(sessions: sessionmaker[Session]) -> None:
+    """273-ФЗ 2008 года и 273-ФЗ 2012 года — разные акты; ссылка без даты неоднозначна."""
+    from datetime import date
+
+    with sessions.begin() as db:
+        for adopted, number in (
+            (date(2008, 12, 25), "273-ФЗ"),
+            (date(2012, 12, 29), "273-ФЗ"),
+            (date(2006, 5, 2), "59-ФЗ"),
+        ):
+            db.add(
+                NpaAct(
+                    organization_id=None,
+                    kind="federal_law",
+                    number=number,
+                    adopted_at=adopted,
+                    title="",
+                    canonical_key=canonical_key("federal_law", number, adopted),
+                )
+            )
+    with sessions() as db:
+        found = find_act(db, 1, canonical_key("federal_law", "273-ФЗ", date(2012, 12, 29)))
+        assert found is not None and found.adopted_at == date(2012, 12, 29)
+        assert find_act(db, 1, canonical_key("federal_law", "273-ФЗ", None)) is None
+        # Единственный закон с таким номером находится и без даты, и с неверным годом
+        assert find_act(db, 1, canonical_key("federal_law", "59-ФЗ", None)) is not None
+        assert find_act(db, 1, canonical_key("federal_law", "59-ФЗ", date(2007, 5, 2))) is not None

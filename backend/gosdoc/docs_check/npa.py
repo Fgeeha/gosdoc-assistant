@@ -17,7 +17,7 @@ from gosdoc.core.llm import LLMClient
 from gosdoc.core.storage import FileStorage
 from gosdoc.core.text import extract_paragraphs
 from gosdoc.docs_check.models import NpaAct, NpaChangeLog, NpaChunk, NpaEdition
-from gosdoc.docs_check.npa_refs import KINDS, ActHeader, canonical_key
+from gosdoc.docs_check.npa_refs import KINDS, LAW_KINDS, ActHeader, canonical_key
 from rag.chunker import chunk_act
 from rag.search import ChromaIndex, ElasticIndex, IndexedChunk, MilvusIndex, TextIndex, VectorIndex
 
@@ -98,10 +98,22 @@ def visible_acts(organization_id: int) -> Any:
 
 
 def find_act(db: Session, organization_id: int, key: str) -> NpaAct | None:
-    """Ведомственный акт организации важнее общего с тем же ключом."""
-    acts = db.scalars(
-        select(NpaAct).where(NpaAct.canonical_key == key, visible_acts(organization_id))
-    )
+    """Ведомственный акт организации важнее общего с тем же ключом.
+
+    В ключе закона есть год. Ссылка без даты («152-ФЗ») или с неверным годом находит
+    акт, только если закон с таким номером в базе один: угадывать между двумя нельзя.
+    """
+
+    def visible(condition: Any) -> list[NpaAct]:
+        return list(db.scalars(select(NpaAct).where(condition, visible_acts(organization_id))))
+
+    acts = visible(NpaAct.canonical_key == key)
+    kind, number = key.split(":")[:2]
+    if not acts and kind in LAW_KINDS:
+        base = f"{kind}:{number}"
+        acts = visible(or_(NpaAct.canonical_key == base, NpaAct.canonical_key.like(f"{base}:%")))
+        if len({a.canonical_key for a in acts}) > 1:
+            return None
     return max(acts, key=lambda a: a.organization_id is not None, default=None)
 
 
