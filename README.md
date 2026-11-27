@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/Fgeeha/gosdoc-assistant/actions/workflows/ci.yml"><img src="https://github.com/Fgeeha/gosdoc-assistant/actions/workflows/ci.yml/badge.svg?branch=Master" alt="CI"></a>
-  <a href="https://github.com/Fgeeha/gosdoc-assistant/releases/tag/v0.1.0"><img src="https://img.shields.io/badge/версия-0.1.0-13203A" alt="Версия 0.1.0"></a>
+  <a href="https://github.com/Fgeeha/gosdoc-assistant/releases/tag/v0.2.0"><img src="https://img.shields.io/badge/версия-0.2.0-13203A" alt="Версия 0.2.0"></a>
   <img src="https://img.shields.io/badge/контур-закрытый-E3A72F" alt="Закрытый контур">
 </p>
 
@@ -161,7 +161,7 @@ tests/            unit, integration, fixtures
 
 </details>
 
-## Ограничения версии 0.1.0
+## Ограничения версии 0.2.0
 
 - Сборка образов на Astra Linux и РЕД ОС, интеграция с Milvus, MLFlow,
   Evidently и Loki на реальных сервисах ещё не проверены.
