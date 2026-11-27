@@ -104,6 +104,8 @@ make help            # все цели
 Интеграционные тесты поднимают PostgreSQL и SeaweedFS через testcontainers;
 выход во внешнюю сеть в тестах запрещён (`pytest-socket`). Каждый push и pull
 request проверяет GitHub Actions: линтеры, тесты, Helm-чарт, сборка образов.
+Из `Master`, `develop` и тегов `v*` dev-образы (на `python:3.11-slim`) публикуются в
+`ghcr.io/fgeeha/gosdoc-{api,worker,frontend}`.
 Сборка на Astra Linux / РЕД ОС, сканирование и выкатка — конвейер в контуре
 `.gitflic-ci.yml`.
 
