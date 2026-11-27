@@ -32,11 +32,13 @@ def _checks(s: Settings) -> dict[str, Callable[[], None]]:
             c.execute(text("SELECT 1"))
 
     def rabbitmq() -> None:
-        params = pika.URLParameters(s.rabbitmq_url)
-        params.socket_timeout = params.blocked_connection_timeout = s.deps_check_timeout_s
-        if (tls := amqp_ssl_options(s)) is not None:
-            params.ssl_options = tls
-        pika.BlockingConnection(params).close()
+        tls = amqp_ssl_options(s)
+        nodes = [pika.URLParameters(url) for url in s.rabbitmq_url.split(";")]
+        for params in nodes:
+            params.socket_timeout = params.blocked_connection_timeout = s.deps_check_timeout_s
+            if tls is not None:
+                params.ssl_options = tls
+        pika.BlockingConnection(nodes).close()  # узлы перебираются до первого доступного
 
     def http(url: str, token: str | None = None) -> Callable[[], None]:
         headers = {"Authorization": f"Bearer {token}"} if token else {}

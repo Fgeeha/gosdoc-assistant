@@ -19,7 +19,7 @@ from gosdoc.core.db import User, get_sessionmaker
 from gosdoc.core.files import cleanup_expired_files
 from gosdoc.core.health import migrations_applied, wait_for_dependencies
 from gosdoc.core.logging import setup_logging
-from gosdoc.core.queue import enqueue
+from gosdoc.core.queue import enqueue, enqueue_after_commit
 from gosdoc.core.storage import S3Storage, get_storage
 from gosdoc.docs_check.models import NpaEdition
 from gosdoc.docs_check.npa import queue_editions
@@ -78,8 +78,7 @@ def _reindex_npa(wait: bool, timeout_s: float) -> int:
     sessions = get_sessionmaker()
     with sessions.begin() as db:
         ids = queue_editions(db, full=True)
-    for edition_id in ids:  # после коммита: воркер должен увидеть статус queued
-        enqueue("npa", "index_npa_edition", edition_id)
+        enqueue_after_commit(db, enqueue, "npa", "index_npa_edition", ids)
     print(f"В очередь поставлено редакций: {len(ids)}")
     while wait:
         with sessions() as db:

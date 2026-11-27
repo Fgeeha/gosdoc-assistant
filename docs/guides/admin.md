@@ -80,6 +80,13 @@ Job миграций читают его перед запуском; без ф�
 shell, поэтому значения — в одинарных кавычках с экранированием (см. шаблон
 в `values-example.yaml`). Секреты читаются один раз при старте: после смены
 значения в OpenBao перезапустите поды (`kubectl rollout restart`).
+Команды через `kubectl exec` этот файл сами не читают — при OpenBao служебные
+команды `gosdoc` запускаются так:
+
+```bash
+kubectl -n gosdoc exec deploy/gosdoc-api -- \
+  sh -c 'set -a; . /vault/secrets/.env; set +a; exec gosdoc create-user --login …'
+```
 
 ### 2.3 RabbitMQ
 

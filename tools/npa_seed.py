@@ -285,12 +285,18 @@ def upload(args: argparse.Namespace) -> int:
             for a in api.get("/api/npa/acts").json()
             if a["repealed_at"]
         }
-        done_file = out / "uploaded.txt"  # повторный запуск догружает только новое
-        done = set(done_file.read_text(encoding="utf-8").split()) if done_file.exists() else set()
+        # Повторный запуск догружает только новое. Строка — «файл<TAB>id акта»: по id
+        # название и отметка об утрате силы обновляются и без новых редакций.
+        done_file = out / "uploaded.txt"
+        lines = done_file.read_text(encoding="utf-8").splitlines() if done_file.exists() else []
+        done = {name: act_id for name, _, act_id in (line.partition("\t") for line in lines)}
         for act in manifest["acts"]:
             act_id = None
             for edition in act["editions"]:
-                if not edition["file"] or edition["file"] in done:
+                if edition["file"] in done:
+                    act_id = act_id or int(done[edition["file"]] or 0) or None
+                    continue
+                if not edition["file"]:
                     continue
                 data = (out / edition["file"]).read_bytes()
                 response = api.post(
@@ -306,7 +312,7 @@ def upload(args: argparse.Namespace) -> int:
                     continue
                 act_id = result["act_id"]
                 with done_file.open("a", encoding="utf-8") as f:
-                    f.write(edition["file"] + "\n")
+                    f.write(f"{edition['file']}\t{act_id}\n")
             if act_id is None:
                 continue
             patch = {

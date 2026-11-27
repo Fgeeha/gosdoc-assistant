@@ -2,7 +2,7 @@
 # Базовый образ — только из отечественных реестров (ADR-0007):
 #   Astra Linux (по умолчанию): registry.astralinux.ru/astra/ubi18
 #   РЕД ОС:                     registry.red-soft.ru/ubi8/ubi
-# python:3.11-slim передаётся только из docker-compose.dev.yml.
+# python:3.11-slim передаётся из docker-compose.dev.yml и dev-сборок GitHub Actions (ADR-0012).
 ARG BASE_IMAGE=registry.astralinux.ru/astra/ubi18
 # Образ только для стадии сборки фронтенда, в итоговые образы не попадает.
 # В контуре — копия из своего реестра (NODE_IMAGE=<реестр>/mirror/node:22-slim).
@@ -57,7 +57,7 @@ ENV HOME=/tmp
 CMD ["dramatiq", "workers.actors", "--processes", "2", "--threads", "4"]
 
 # --- Фронтенд: сборка в образе Node.js, раздача nginx из пакетов ОС ----------
-# Node.js из пакетов ОС старше, чем нужно Vite (ADR-0007), поэтому стадия сборки
+# Node.js из пакетов ОС старше, чем нужно Vite (ADR-0012), поэтому стадия сборки
 # идёт на NODE_IMAGE; в итоговый образ из неё копируется только статика.
 FROM ${NODE_IMAGE} AS frontend-build
 ARG NPM_REGISTRY=https://registry.npmjs.org/
