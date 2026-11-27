@@ -9,6 +9,7 @@ x-build: &build
   args:
     # Только для разработки (ADR-0007); прод-образы собираются на Astra Linux / РЕД ОС.
     BASE_IMAGE: ${DEV_BASE_IMAGE:-python:3.11-slim}
+    NODE_IMAGE: ${NODE_IMAGE:-node:22-slim}
 
 x-app-env: &app-env
   ENVIRONMENT: dev

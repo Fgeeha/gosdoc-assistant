@@ -347,9 +347,8 @@ flowchart LR
   `registry.red-soft.ru/ubi8/ubi`. Python, Tesseract (rus), LibreOffice и nginx
   ставятся пакетами ОС. Один Dockerfile, targets: `api`, `worker`
   (+ LibreOffice, Tesseract), `frontend` (nginx + статика). Статика фронтенда
-  собирается вне образа — `make frontend-dist` на машине сборки или агенте CI
-  (Node.js 20.19+ или 22.12+, либо в контейнере через `NODE_IMAGE`), в образ
-  копируется готовый `frontend/dist`; Node.js в образы не попадает.
+  собирается отдельной стадией на образе `NODE_IMAGE` (`node:22-slim`; в
+  контуре — копия в своём реестре), в итоговый образ копируется только она.
   `python:3.11-slim` — только в `docker-compose.dev.yml` и dev-сборках GitHub
   Actions.
 - **Helm (ADR-0009) — `deploy/helm/gosdoc`:** только приложение: api,
@@ -385,9 +384,7 @@ flowchart LR
 `make up-local` поднимает PostgreSQL, Redis, RabbitMQ, Elasticsearch, ChromaDB,
 SeaweedFS (`server -s3`), mock-LLM, api, worker, scheduler (очистка файлов
 вместо Airflow) и frontend; миграции и создание администратора выполняются
-автоматически. Перед сборкой образов цель сама собирает статику фронтенда
-(`make frontend-dist`), поэтому на машине нужен Node.js 20.19+ или 22.12+ либо
-`NODE_IMAGE=node:22-slim`. Реальная модель
+автоматически. Реальная модель
 подключается переменными `LLM_BASE_URL` / `EMBEDDINGS_BASE_URL`. Для тестов
 не нужны ни GPU, ни модель.
 
