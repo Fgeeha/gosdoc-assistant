@@ -339,8 +339,8 @@ flowchart LR
 - **Платформа:** облако ФГАУ «ЦИТ». PostgreSQL, Redis, Elasticsearch, RabbitMQ,
   Kubernetes, Inference, Airflow, MLFlow, Milvus заказываются через портал и
   подключаются по адресам `*.fgau.local` и паролям из Secret. TLS — через
-  локальный корневой CA (`CA_BUNDLE`), он используется для PostgreSQL, S3,
-  Inference и LDAP.
+  локальный корневой CA (`CA_BUNDLE`), он используется для PostgreSQL, RabbitMQ,
+  S3, Inference, Elasticsearch, Milvus, LDAP и MLFlow.
 - **Образы (ADR-0007):** базовый образ — аргумент сборки `BASE_IMAGE`:
   `registry.astralinux.ru/astra/ubi18` (по умолчанию) или
   `registry.red-soft.ru/ubi8/ubi`. Python, Tesseract (rus), LibreOffice, Node.js
