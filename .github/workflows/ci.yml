@@ -1,12 +1,14 @@
 # Проверка в GitHub: линтеры, тесты, Helm-чарт, сборка образов.
-# Образы собираются на dev-базе python:3.11-slim (ADR-0007) только для проверки
-# сборки и никуда не публикуются; прод-образы на Astra Linux / РЕД ОС
+# Образы собираются на dev-базе python:3.11-slim (ADR-0007). При push в Master,
+# develop и по тегам v* они публикуются в ghcr.io как dev-сборки; в остальных
+# случаях только проверяется сборка. Прод-образы на Astra Linux / РЕД ОС
 # собирает конвейер в контуре (.gitflic-ci.yml).
 name: CI
 
 on:
   push:
     branches: [Master, develop, "feature/**", "bugfix/**", "release/**", "hotfix/**"]
+    tags: ["v*"]
   pull_request:
 
 concurrency:
@@ -52,8 +54,44 @@ jobs:
       - run: make helm-lint
 
   build:
-    needs: [lint, test]
+    needs: [lint, test, helm]
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [api, worker, frontend]
+    env:
+      # Из форков и веток задач образы не публикуются.
+      PUSH: ${{ github.event_name == 'push' && (github.ref_name == 'Master' || github.ref_name == 'develop' || github.ref_type == 'tag') }}
     steps:
       - uses: actions/checkout@v4
-      - run: make images BASE_IMAGE=python:3.11-slim IMAGE_TAG=${{ github.sha }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: env.PUSH == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Теги: имя ветки, версия из тега v* (и latest), sha коммита.
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/gosdoc-${{ matrix.target }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=sha
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          target: ${{ matrix.target }}
+          build-args: BASE_IMAGE=python:3.11-slim
+          push: ${{ env.PUSH == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.target }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.target }}
