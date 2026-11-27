@@ -97,6 +97,7 @@ make up-local        # при первом запуске создаст .env и
 
 ```sh
 make install         # зависимости (uv, npm)
+make frontend-dist   # статика фронтенда в frontend/dist (её копирует образ)
 make check           # ruff, mypy, tsc и все тесты
 make test-unit       # быстрые тесты без Docker
 make help            # все цели
@@ -105,6 +106,8 @@ make help            # все цели
 Интеграционные тесты поднимают PostgreSQL и SeaweedFS через testcontainers;
 выход во внешнюю сеть в тестах запрещён (`pytest-socket`). Каждый push и pull
 request проверяет GitHub Actions: линтеры, тесты, Helm-чарт, сборка образов.
+Статика фронтенда собирается до сборки образа и сохраняется артефактом
+`frontend-dist`.
 Из `Master`, `develop` и тегов `v*` dev-образы (на `python:3.11-slim`) публикуются в
 `ghcr.io/fgeeha/gosdoc-{api,worker,frontend}`.
 Сборка на Astra Linux / РЕД ОС, сканирование и выкатка — конвейер в контуре
@@ -150,6 +153,7 @@ tests/            unit, integration, fixtures
 <summary><b>Развёртывание в Kubernetes</b></summary>
 
 1. Соберите и опубликуйте образы: `make images BASE_IMAGE=... IMAGE_PREFIX=<реестр>/gosdoc/gosdoc`.
+   Нужен Node.js 20.19+ или 22.12+; если его нет — добавьте `NODE_IMAGE=node:22-slim`.
 2. Создайте Secret с ключами `DATABASE_URL`, `RABBITMQ_URL`, `S3_ACCESS_KEY`,
    `S3_SECRET_KEY`, `LLM_API_KEY`, `SERVICE_TOKEN` (32+ символов),
    `GOSDOC_ADMIN_PASSWORD` и ConfigMap с корневым CA.
