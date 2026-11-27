@@ -88,10 +88,15 @@ def parse_date(text: str) -> date | None:
         return None
 
 
+LAW_KINDS = ("federal_law", "federal_constitutional_law")
+
+
 def canonical_key(kind: str, number: str, adopted_at: date | None) -> str:
     number = re.sub(r"\s+", "", number).upper().replace("N", "№").lstrip("№")
-    if kind in ("federal_law", "federal_constitutional_law", "gost"):
+    if kind == "gost":
         return f"{kind}:{number}"
+    if kind in LAW_KINDS:  # номера законов повторяются по годам: 273-ФЗ есть и в 2008, и в 2012
+        return f"{kind}:{number}:{adopted_at.year}" if adopted_at else f"{kind}:{number}"
     return f"{kind}:{number}:{adopted_at.isoformat() if adopted_at else '?'}"
 
 

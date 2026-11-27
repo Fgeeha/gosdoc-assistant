@@ -112,6 +112,19 @@ def check_ref(
         ]
     label = act_label(act)
     found: list[FindingDraft] = []
+    wrong_date = None
+    if ref.adopted_at and act.adopted_at and ref.adopted_at != act.adopted_at:
+        wrong_date = FindingDraft(
+            severity="warning",
+            message=f"Дата акта указана неверно: в базе {act.adopted_at:%d.%m.%Y}",
+            norm=label,
+            recommendation=f"Исправьте дату на {act.adopted_at:%d.%m.%Y}",
+            **base,
+        )
+        # Другой год — возможно, это другой закон с тем же номером, которого нет в базе:
+        # сверять с найденным актом статьи и утрату силы нельзя.
+        if ref.adopted_at.year != act.adopted_at.year:
+            return [wrong_date]
     if act.repealed_at and act.repealed_at <= today:
         old = edition_at(db, act.id, act.repealed_at)
         chunk = _chunk_at(db, old, ref.path) if old and ref.path else None
@@ -127,16 +140,8 @@ def check_ref(
             )
         )
         return found
-    if ref.adopted_at and act.adopted_at and ref.adopted_at != act.adopted_at:
-        found.append(
-            FindingDraft(
-                severity="warning",
-                message=f"Дата акта указана неверно: в базе {act.adopted_at:%d.%m.%Y}",
-                norm=label,
-                recommendation=f"Исправьте дату на {act.adopted_at:%d.%m.%Y}",
-                **base,
-            )
-        )
+    if wrong_date is not None:
+        found.append(wrong_date)
     current = edition_at(db, act.id, today)
     if current is None:
         return found

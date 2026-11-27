@@ -17,9 +17,9 @@ def test_extract_refs_variants() -> None:
     )
     got = [(r.key, r.path, r.edition_date, r.paragraph) for r in refs]
     assert got == [
-        ("federal_law:59-ФЗ", "ст. 12 ч. 1", date(2010, 7, 27), 0),
-        ("federal_law:152-ФЗ", "ст. 9", None, 1),
-        ("federal_law:152-ФЗ", "ст. 5", None, 1),
+        ("federal_law:59-ФЗ:2006", "ст. 12 ч. 1", date(2010, 7, 27), 0),
+        ("federal_law:152-ФЗ:2006", "ст. 9", None, 1),
+        ("federal_law:152-ФЗ", "ст. 5", None, 1),  # без даты — год неизвестен
         ("government_decree:477:2009-06-15", None, None, 2),
         ("gost:Р7.0.97-2016", None, None, 2),
     ]
