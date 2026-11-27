@@ -95,7 +95,8 @@ airflow/dags/      # gosdoc_npa_update, gosdoc_maintenance, gosdoc_quality — �
 
 Абстракции заводятся только там, где реализаций действительно несколько:
 `FileStorage` (s3 / postgres / local), `AuthProvider` (local / ldap),
-`VectorIndex` (Chroma / Milvus). LLM-заглушка — отдельный HTTP-сервис
+`TextIndex` (Elasticsearch / PostgreSQL), `VectorIndex` (Chroma / Milvus).
+LLM-заглушка — отдельный HTTP-сервис
 `deploy/mock-llm`, клиент один.
 
 ## 4. Потоки данных
@@ -122,8 +123,11 @@ sequenceDiagram
     U->>A: GET отчёт / скачать DOCX, оценка замечаний
 ```
 
-**Проверка ссылок** — без LLM. Ссылка нормализуется в ключ
-`(вид, номер, дата принятия)`, например `(ФЗ, 59-ФЗ, 2006-05-02)`. Результаты
+**Проверка ссылок** — без LLM. Ссылка нормализуется в ключ: у
+закона — вид, номер и год принятия (`federal_law:59-ФЗ:2006`), у подзаконного
+акта — вид, номер и дата принятия, у ГОСТ — вид и номер. Ссылка на закон без
+даты или с другим годом находит акт, только если закон с таким номером в базе
+один; при другом годе сообщается только о дате. Результаты
 (`findings.kind = npa_ref`):
 
 | Замечание | Условие | `severity` |
@@ -342,7 +346,7 @@ flowchart LR
   подключаются по адресам `*.fgau.local` и паролям из Secret. TLS — через
   локальный корневой CA (`CA_BUNDLE`), он используется для PostgreSQL, RabbitMQ,
   S3, Inference, Elasticsearch, Milvus, LDAP и MLFlow.
-- **Образы (ADR-0007):** базовый образ — аргумент сборки `BASE_IMAGE`:
+- **Образы (ADR-0007, ADR-0012):** базовый образ — аргумент сборки `BASE_IMAGE`:
   `registry.astralinux.ru/astra/ubi18` (по умолчанию) или
   `registry.red-soft.ru/ubi8/ubi`. Python, Tesseract (rus), LibreOffice и nginx
   ставятся пакетами ОС. Один Dockerfile, targets: `api`, `worker`
